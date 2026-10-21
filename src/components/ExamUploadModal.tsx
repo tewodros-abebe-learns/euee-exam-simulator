@@ -15,7 +15,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
-import { isSupportedUpload, SUPPORTED_UPLOAD_EXTENSIONS, getFileExtension } from '../lib/fileParser';
+import { isSupportedUpload, isLocalImportFile, SUPPORTED_UPLOAD_EXTENSIONS } from '../lib/fileParser';
 import { SUBJECTS, GRADES, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
 import { EXAM_JSON_TEMPLATE, suggestTitleFromFileName, type ImportReport, type ImportedExam } from '../lib/examSchema';
 import { parseExamText } from '../lib/examImport';
@@ -75,6 +75,7 @@ export default function ExamUploadModal({
   const [previewSource, setPreviewSource] = useState('');
   const [isReadingFile, setIsReadingFile] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const pendingSourceRef = useRef<{ file?: File; text?: string } | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -98,7 +99,22 @@ export default function ExamUploadModal({
     setPreview(null);
     setPreviewTitle('');
     setPreviewSource('');
+    pendingSourceRef.current = null;
     setError('');
+  };
+
+  /** Falls back to the AI extractor for a file/text that had no structure. */
+  const retryWithAi = async () => {
+    const source = pendingSourceRef.current;
+    if (!source) return;
+    setError('');
+    try {
+      if (source.file) await onUpload(source.file, subject, grade);
+      else if (source.text) await onProcessText(source.text, subject, grade);
+      onClose();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to process the document with AI.');
+    }
   };
 
   const handleManualClick = () => {
@@ -115,7 +131,8 @@ export default function ExamUploadModal({
     }
   };
 
-  const importFromText = (text: string, sourceName: string) => {
+  const importFromText = (text: string, sourceName: string, file?: File) => {
+    pendingSourceRef.current = { file, text: file ? undefined : text };
     const report = parseExamText(text, {
       subject,
       grade,
@@ -136,7 +153,7 @@ export default function ExamUploadModal({
     setIsReadingFile(true);
     try {
       const text = await file.text();
-      importFromText(text, file.name);
+      importFromText(text, file.name, file);
     } catch (err: any) {
       setError(err?.message || 'Could not read that file.');
     } finally {
@@ -149,8 +166,9 @@ export default function ExamUploadModal({
     if (!file) return;
     setError('');
 
-    // JSON is structured already: import it locally instead of paying for AI.
-    if (getFileExtension(file.name) === '.json') {
+    // JSON/Markdown are structured already: import locally instead of paying
+    // for an AI call (and waiting for a network round trip).
+    if (isLocalImportFile(file)) {
       await readLocalFile(file);
       return;
     }
@@ -170,7 +188,7 @@ export default function ExamUploadModal({
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
 
-    if (getFileExtension(file.name) === '.json') {
+    if (isLocalImportFile(file)) {
       await readLocalFile(file);
       return;
     }
@@ -283,7 +301,7 @@ export default function ExamUploadModal({
         <div className="mb-5 p-3.5 rounded-xl bg-orange-400/10 border border-orange-400/20 text-orange-400 text-xs flex items-start gap-3">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
           <div className="flex-1">
-            <strong className="font-bold block mb-1">Beta Testing Feature</strong>
+            <strong className="font-bold block mb-1">{t('betaFeatureLabel')}</strong>
             <p className="leading-relaxed opacity-90">
               AI extraction is still experimental and may struggle with complex layouts or handwriting. Check the generated
               questions before you rely on them for revision.
@@ -621,6 +639,17 @@ export default function ExamUploadModal({
                   >
                     {t('chooseAnotherFile')}
                   </button>
+                  {!preview.ok && pendingSourceRef.current && (
+                    <button
+                      type="button"
+                      onClick={retryWithAi}
+                      disabled={isParsing}
+                      className="px-5 py-2.5 bg-white/5 border border-[var(--border-color)] text-[var(--text-primary)] rounded-xl font-bold hover:bg-white/10 transition-all flex items-center gap-2 text-xs disabled:opacity-50"
+                    >
+                      {isParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      {t('tryWithAi')}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={handleConfirmImport}

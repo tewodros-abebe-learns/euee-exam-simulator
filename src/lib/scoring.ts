@@ -104,8 +104,10 @@ export function isValidQuestion(question: unknown): question is Question {
       q.options.every((option) => typeof option === 'string' && option.trim().length > 0) &&
       typeof q.correctAnswerIndex === 'number' &&
       Number.isInteger(q.correctAnswerIndex) &&
-      q.correctAnswerIndex >= 0 &&
-      q.correctAnswerIndex < q.options.length
+      // -1 means "imported without an answer key": still a valid question,
+      // it is just excluded from scoring.
+      (q.correctAnswerIndex === -1 ||
+        (q.correctAnswerIndex >= 0 && q.correctAnswerIndex < q.options.length))
   );
 }
 

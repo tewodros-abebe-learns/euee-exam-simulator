@@ -98,7 +98,9 @@ export async function generateExamFromDocument(options: GenerateExamOptions): Pr
 
 function localFallback(rawText?: string, title?: string): ExamData | null {
   if (!rawText || rawText.trim().length < 40) return null;
-  const parsed = parseExamHeuristicallyDetailed(rawText, title || 'Uploaded Exam Practice');
+  const parsed = parseExamHeuristicallyDetailed(rawText, title || 'Uploaded Exam Practice', {
+    keepUnknownAnswers: true,
+  });
   if (!parsed.data || parsed.confidence !== 'high' || parsed.data.questions.length === 0) return null;
   return {
     ...normalizeExamData(parsed.data),

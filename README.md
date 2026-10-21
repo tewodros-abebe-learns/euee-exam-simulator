@@ -20,7 +20,7 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
 - ⚡ **AI-Powered Exam Generation**: Upload exam PDFs, document scans, or paste raw syllabus text to automatically generate structured multiple-choice questions with answer keys and explanations via Google Gemini.
 - ⏱️ **Real-Time Exam Simulation**: Authentic exam interface featuring customizable countdown timers, question bookmarks, navigation palettes, and instant score breakdowns.
 - 📊 **Performance Analytics & History**: Detailed session review screens highlighting correct answers, explanations, question-by-question timing, and persistent progress metrics.
-- 🌐 **Multilingual Interface**: Full internationalization supporting **English**, **Amharic (አማርኛ)**, **Afaan Oromoo**, and **Tigrinya (ትግርኛ)**.
+- 🌐 **Multilingual Interface**: Full internationalization supporting **English** and **Amharic (አማርኛ)**.
 - 📴 **Offline-First Resilience**: Full IndexedDB offline storage for taking exams, saving sessions, and studying even with intermittent or no internet connection.
 - 📐 **LaTeX & Scientific Formula Rendering**: Integrated KaTeX engine for sharp mathematical formulas, chemical equations, and scientific notations.
 - 🔒 **Enterprise-Grade Security**: Secured with Firestore security rules, Helmet HTTP headers, IP rate-limiting, and server-side secret management.
@@ -30,12 +30,12 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
 ## 🚀 How to Use the App
 
 1. **Getting Started**:
-   - On initial launch, choose your preferred language (**English**, **Amharic**, **Afaan Oromoo**, or **Tigrinya**) and theme (Dark/Light).
+   - On initial launch, choose your preferred language (**English** or **Amharic**) and theme (Dark/Light).
    - Sign in using your email and password, or click **"Continue as Guest"** for instant anonymous access.
 
 2. **Selecting or Creating an Exam**:
    - Upload a PDF or paste text to create your first practice exam, then organise it by subject and grade.
-   - Or upload your own PDF / text notes on the home screen to let the AI create a custom practice exam.
+   - Or upload your own PDF / image / Markdown / JSON file to build a custom exam. Structured files are read on-device; the AI extractor is optional.
 
 3. **Taking the Exam**:
    - Select your answers, flag questions for review, and monitor your remaining time.
@@ -174,6 +174,3 @@ This project is **100% Free and Open Source** under the **MIT License**. You are
 
 ---
 
-## 👨‍💻 Creator & Attribution
-
-Developed with passion by **Mr. Tewodros Abebe** using **Google AI Studio**.

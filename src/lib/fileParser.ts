@@ -2,7 +2,17 @@
  * Safe client-side file reading and text extraction utilities
  */
 
-export const SUPPORTED_UPLOAD_EXTENSIONS = ['.pdf', '.txt', '.md', '.csv', '.json', '.rtf', '.png', '.jpg', '.jpeg', '.webp'] as const;
+/**
+ * Files that are already structured and must be imported on-device instead of
+ * being sent to the AI extractor.
+ */
+export const LOCAL_IMPORT_EXTENSIONS = ['.json', '.md', '.markdown'] as const;
+
+export function isLocalImportFile(file: File): boolean {
+  return LOCAL_IMPORT_EXTENSIONS.includes(getFileExtension(file.name) as any);
+}
+
+export const SUPPORTED_UPLOAD_EXTENSIONS = ['.pdf', '.txt', '.md', '.markdown', '.csv', '.json', '.png', '.jpg', '.jpeg', '.webp'] as const;
 
 export function getFileExtension(fileName: string): string {
   const match = /\.([^.]+)$/.exec(fileName.toLowerCase());
@@ -45,7 +55,7 @@ export async function extractTextFromFile(file: File): Promise<string> {
     fileName.endsWith('.md') ||
     fileName.endsWith('.csv') ||
     fileName.endsWith('.json') ||
-    fileName.endsWith('.rtf') ||
+    fileName.endsWith('.markdown') ||
     file.type.startsWith('text/')
   ) {
     try {

@@ -186,7 +186,11 @@ export default function ExamInterface({
       }
 
       const key = e.key.toUpperCase();
-      const optionIndex = /^[A-D]$/.test(key) ? key.charCodeAt(0) - 65 : /^[1-4]$/.test(key) ? Number(key) - 1 : -1;
+      const optionIndex = /^[A-E]$/.test(key)
+        ? key.charCodeAt(0) - 65
+        : /^[1-5]$/.test(key)
+          ? Number(key) - 1
+          : -1;
       if (optionIndex >= 0) {
         const option = questions[currentIndex]?.options?.[optionIndex];
         if (option !== undefined) {
@@ -448,8 +452,8 @@ export default function ExamInterface({
     return (
       <div className="flex flex-col h-full items-center justify-center bg-[var(--bg-primary)] text-[var(--text-primary)] p-6">
         <AlertTriangle className="w-12 h-12 text-yellow-400 mb-4" />
-        <h2 className="text-2xl font-bold mb-2">No Questions Found</h2>
-        <p className="text-[var(--text-secondary)] mb-6 text-center">We couldn't extract any questions from the document.</p>
+        <h2 className="text-2xl font-bold mb-2">{t('noQuestionsFound')}</h2>
+        <p className="text-[var(--text-secondary)] mb-6 text-center">{t('noQuestionsFoundDesc')}</p>
         <button onClick={() => onBack()} className="bg-[#8AB4F8] text-gray-900 px-6 py-2.5 rounded-xl font-bold hover:bg-[#AECBFA] transition-all">{t('backToDashboard')}</button>
       </div>
     );
@@ -582,7 +586,7 @@ export default function ExamInterface({
                           <button 
                             onClick={() => setZoomLevel(prev => Math.max(0.6, parseFloat((prev - 0.1).toFixed(1))))} 
                             className="p-2 rounded-xl bg-[var(--bg-accent)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--card-hover)] transition-colors"
-                            title="Decrease text size"
+                            title={t('decreaseTextSize')}
                           >
                             <Minus className="w-4 h-4" />
                           </button>
@@ -600,7 +604,7 @@ export default function ExamInterface({
                           <button 
                             onClick={() => setZoomLevel(prev => Math.min(1.8, parseFloat((prev + 0.1).toFixed(1))))} 
                             className="p-2 rounded-xl bg-[var(--bg-accent)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--card-hover)] transition-colors"
-                            title="Increase text size"
+                            title={t('increaseTextSize')}
                           >
                             <Plus className="w-4 h-4" />
                           </button>
@@ -749,7 +753,7 @@ export default function ExamInterface({
                     <div className="w-full mb-6 p-4 sm:p-5 bg-[var(--context-box-bg)] border-l-4 border-[var(--context-box-border)] rounded-r-2xl text-[var(--text-primary)] italic text-sm md:text-base font-normal whitespace-pre-wrap leading-relaxed shadow-xs">
                       <div className="flex items-center gap-1.5 text-xs font-bold not-italic mb-1.5 text-[var(--text-secondary)]">
                         <Info className="w-3.5 h-3.5" />
-                        <span>Context / Data</span>
+                        <span>{t('contextDataLabel')}</span>
                       </div>
                       <LatexText text={questionSpecificContext} />
                     </div>

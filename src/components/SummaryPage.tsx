@@ -21,6 +21,7 @@ import {
   MinusCircle,
   ChevronDown,
   ChevronUp,
+  AlertCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Question } from '../services/geminiService';
@@ -66,6 +67,7 @@ export default function SummaryPage({
 }: SummaryPageProps) {
   const { t } = useLanguage();
   const [isCopied, setIsCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [copiedPlatform, setCopiedPlatform] = useState<string | null>(null);
   const [showReview, setShowReview] = useState(false);
   const [expandedExplanations, setExpandedExplanations] = useState<Record<string, boolean>>({});
@@ -88,7 +90,7 @@ export default function SummaryPage({
 
   const fullStudyPrompt = `[EXAM REVIEW & TUTORING REQUEST]
 Exam Title: "${title}" (${questions.length} questions)
-Score: ${result.correct}/${result.total} (${result.percentage}%)
+Score: ${result.correct}/${result.graded} (${result.percentage}%)
 
 MY ANSWER KEY:
 ${formattedAnswers}
@@ -106,6 +108,8 @@ INSTRUCTIONS FOR AI TUTOR:
       window.setTimeout(() => setIsCopied(false), 2500);
     } catch (err) {
       console.error('Failed to copy text: ', err);
+      setCopyFailed(true);
+      window.setTimeout(() => setCopyFailed(false), 3000);
     }
   };
 
@@ -448,7 +452,7 @@ INSTRUCTIONS FOR AI TUTOR:
         {/* Answer key */}
         <div className="max-w-2xl mx-auto mb-16 text-left">
           <div className="flex items-center justify-between mb-4 px-2">
-            <h3 className="text-xl font-black text-[var(--text-primary)]">{t('answerKey')}</h3>
+            <h3 className="text-xl font-black text-[var(--text-primary)]">{t('yourAnswers')}</h3>
             <button
               onClick={copyPrompt}
               className="bg-[var(--bg-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] rounded-full px-5 py-2 text-xs font-bold flex items-center gap-2 hover:bg-[var(--bg-accent)] transition-all cursor-pointer shadow-xs"
@@ -457,6 +461,11 @@ INSTRUCTIONS FOR AI TUTOR:
                 <>
                   <Check className="w-4 h-4 text-emerald-500" />
                   {t('copied')}
+                </>
+              ) : copyFailed ? (
+                <>
+                  <AlertCircle className="w-4 h-4 text-amber-500" />
+                  {t('copyFailed')}
                 </>
               ) : (
                 <>
@@ -487,7 +496,7 @@ INSTRUCTIONS FOR AI TUTOR:
           <div className="flex flex-col items-center justify-center mb-6">
             <span className="inline-flex items-center gap-2 px-3.5 py-1 bg-[#3b82f6]/10 text-[#3b82f6] dark:text-[#8AB4F8] border border-[#3b82f6]/20 rounded-full text-xs font-black uppercase tracking-wider mb-2">
               <Sparkles className="w-3.5 h-3.5" />
-              <span>Smart Study Assistant</span>
+              <span>{t('smartStudyAssistant')}</span>
             </span>
             <h3 className="text-xl sm:text-2xl font-black text-[var(--text-primary)] tracking-tight">
               {t('continueStudyTitle')}
@@ -506,6 +515,11 @@ INSTRUCTIONS FOR AI TUTOR:
                 <>
                   <Check className="w-4 h-4 text-emerald-500" />
                   {t('copied')}
+                </>
+              ) : copyFailed ? (
+                <>
+                  <AlertCircle className="w-4 h-4 text-amber-500" />
+                  {t('copyFailed')}
                 </>
               ) : (
                 <>

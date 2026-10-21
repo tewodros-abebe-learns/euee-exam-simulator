@@ -212,3 +212,40 @@ test('schema version is carried in the export', () => {
   const exported = JSON.parse(examToJsonString({ title: 'T', subject: 'Math', questions: [] }));
   assert.equal(exported.schemaVersion, EXAM_SCHEMA_VERSION);
 });
+
+test('Markdown headings and bold markers do not swallow questions', () => {
+  const headed = parseExamText(`# Practice
+
+## Q1
+Capital of Ethiopia?
+A) Nairobi
+B) Addis Ababa
+C) Cairo
+D) Khartoum
+Answer: B
+
+## Q2
+Which is prime?
+A) 4
+B) 6
+C) 7
+D) 9
+Answer: C`);
+
+  assert.equal(headed.ok, true);
+  assert.equal(headed.exam?.questions.length, 2);
+  assert.deepEqual(
+    headed.exam?.questions.map((q) => [q.options.length, q.correctAnswerIndex]),
+    [[4, 1], [4, 2]]
+  );
+
+  const bold = parseExamText(`**1.** Which gas do plants absorb?
+**A)** Oxygen
+**B)** Carbon dioxide
+Answer: B`);
+
+  assert.equal(bold.ok, true);
+  assert.equal(bold.exam?.questions.length, 1);
+  assert.equal(bold.exam?.questions[0].question, 'Which gas do plants absorb?');
+  assert.equal(bold.exam?.questions[0].correctAnswerIndex, 1);
+});

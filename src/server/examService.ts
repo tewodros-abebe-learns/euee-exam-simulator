@@ -83,12 +83,14 @@ export interface ExamRequestBody {
  */
 function buildLocalFallback(trimmedText: string, fileName?: string): any | null {
   if (!trimmedText || trimmedText.trim().length < 40) return null;
-  const parsed = parseExamHeuristicallyDetailed(trimmedText, fileName || "Uploaded Exam Practice");
+  const parsed = parseExamHeuristicallyDetailed(trimmedText, fileName || "Uploaded Exam Practice", {
+    keepUnknownAnswers: true,
+  });
   if (!parsed.data || parsed.confidence !== 'high' || parsed.data.questions.length === 0) return null;
   return {
     ...parsed.data,
     source: 'heuristic',
-    warning: "Extracted on-device because the AI service was unavailable. Please double-check the questions and answers."
+    warning: "Extracted locally because the AI service was unavailable. Questions without a readable answer key are left ungraded — please double-check the rest."
   };
 }
 

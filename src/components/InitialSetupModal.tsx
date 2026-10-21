@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Languages, Sun, Moon, Check, User, Sparkles, LogIn, Send, X } from 'lucide-react';
+import { Languages, Sun, Moon, Check, User, Sparkles, LogIn, X } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Language } from '../i18n/translations';
 
@@ -13,11 +13,9 @@ interface InitialSetupModalProps {
   onClose?: () => void;
 }
 
-const LANGUAGES: { code: Language; label: string; native: string; desc: string }[] = [
-  { code: 'en', label: 'English', native: 'English', desc: 'Standard' },
-  { code: 'am', label: 'Amharic', native: 'አማርኛ', desc: 'ኢትዮጵያ' },
-  { code: 'om', label: 'Afaan Oromoo', native: 'Oromoo', desc: 'Oromiyaa' },
-  { code: 'ti', label: 'Tigrinya', native: 'ትግርኛ', desc: 'ትግራይ' },
+const LANGUAGES: { code: Language; label: string; native: string }[] = [
+  { code: 'en', label: 'English', native: 'English' },
+  { code: 'am', label: 'Amharic', native: 'አማርኛ' },
 ];
 
 export default function InitialSetupModal({
@@ -175,7 +173,7 @@ export default function InitialSetupModal({
                       </div>
                     )}
                   </div>
-                  <span className="text-[10px] text-[var(--text-secondary)] block truncate">Clean & Crisp</span>
+                  <span className="text-[10px] text-[var(--text-secondary)] block truncate">{t('themeLightDesc')}</span>
                 </div>
               </button>
 
@@ -207,7 +205,7 @@ export default function InitialSetupModal({
                       </div>
                     )}
                   </div>
-                  <span className="text-[10px] text-[var(--text-secondary)] block truncate">Eye-comfort</span>
+                  <span className="text-[10px] text-[var(--text-secondary)] block truncate">{t('themeDarkDesc')}</span>
                 </div>
               </button>
             </div>
@@ -237,22 +235,6 @@ export default function InitialSetupModal({
             <span>{t('signInOrRegister')}</span>
           </button>
 
-          {/* Developer Credit & Telegram Link */}
-          <div className="pt-2.5 border-t border-[var(--border-color)]/60 flex items-center justify-between gap-2 px-1">
-            <span className="text-[11px] font-semibold text-[var(--text-secondary)]">
-              Developed By <strong className="text-[var(--text-primary)] font-bold">Mr. Tewodros Abebe</strong>
-            </span>
-            <a
-              href="https://t.me/hahu_Ai"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Contact Mr. Tewodros Abebe on Telegram (@hahu_Ai)"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#229ED9]/15 hover:bg-[#229ED9]/25 text-[#229ED9] border border-[#229ED9]/30 transition-all font-bold text-[10px] hover:scale-105 active:scale-95"
-            >
-              <Send className="w-3 h-3" />
-              <span>Telegram</span>
-            </a>
-          </div>
         </div>
       </motion.div>
     </div>

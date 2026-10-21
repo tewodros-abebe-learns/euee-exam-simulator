@@ -29,10 +29,10 @@ export interface HeuristicParseResult {
  */
 export interface HeuristicParseOptions {
   /**
-   * When true, questions whose answer key was not readable keep
-   * `correctAnswerIndex = -1` instead of defaulting to option A. Used by the
-   * deterministic file importer, where guessing an answer would silently
-   * corrupt a student's score.
+   * Defaults to true: a question whose answer key was not readable keeps
+   * `correctAnswerIndex = -1` instead of defaulting to option A, so grading
+   * can never be done against a guess. Set to false only for legacy callers
+   * that require every question to carry an index.
    */
   keepUnknownAnswers?: boolean;
 }
@@ -53,7 +53,17 @@ export function parseExamHeuristicallyDetailed(
 
   const lines = rawText
     .split(/\r?\n/)
-    .map((line) => line.trim())
+    // Markdown decoration is not part of the question: a heading such as
+    // "## Q1" or a bold line such as "**A) ...**" must parse like plain text.
+    .map((line) =>
+      line
+        .trim()
+        .replace(/^#{1,6}\s+/, '')
+        .replace(/^>+\s*/, '')
+        .replace(/^\*\*(.+?)\*\*/, '$1')
+        .replace(/^\*\*(.*)\*\*$/, '$1')
+        .trim()
+    )
     .filter(Boolean);
   if (lines.length === 0) return empty;
 
@@ -69,6 +79,9 @@ export function parseExamHeuristicallyDetailed(
   let currentExplanation = '';
   let currentId = 1;
   let currentQuestionNumber = 0;
+  // Set when a bare "Q3"/"3." heading was seen: the next line is its stem, even
+  // if the stem is not phrased as a question.
+  let expectingStem = false;
 
   let candidateQuestions = 0;
   let rejectedQuestions = 0;
@@ -77,6 +90,7 @@ export function parseExamHeuristicallyDetailed(
   // Regex patterns
   const questionStartRegex = /^(?:Question\s*|Q\s*)?(\d+)[\.\)\:\-]\s*(.*)/i;
   const standaloneNumberRegex = /^(\d+)[\.\)]?$/;
+  const bareQuestionHeadingRegex = /^(?:Question|Q)\s*(\d+)$/i;
   const optionRegex = /^(?:[•\-\*]\s*)?[(\[]?([A-Ea-e1-4])[)\].\:\-]\s*(.*)/;
   const answerRegex = /^(?:Correct\s*)?(?:Answer|Ans|Key|Option)[\s\:\-]+([A-Ea-e1-4]|\d+)/i;
   const explanationRegex = /^(?:Explanation|Reason|Solution|Note)[\s\:\-]+(.*)/i;
@@ -104,9 +118,9 @@ export function parseExamHeuristicallyDetailed(
           correctAnswerIndex:
             currentAnswerIndex !== null && currentAnswerIndex < uniqueOptions.length
               ? currentAnswerIndex
-              : parseOptions.keepUnknownAnswers
-                ? -1
-                : 0,
+              : parseOptions.keepUnknownAnswers === false
+                ? 0
+                : -1,
           explanation: currentExplanation.trim() || 'Extracted from the source document.',
         });
         currentContext = '';
@@ -119,6 +133,7 @@ export function parseExamHeuristicallyDetailed(
     currentOptions = [];
     currentAnswerIndex = null;
     currentExplanation = '';
+    expectingStem = false;
   }
 
   for (let i = 0; i < lines.length; i++) {
@@ -152,11 +167,19 @@ export function parseExamHeuristicallyDetailed(
       continue;
     }
 
+    const bareHeadingMatch = line.match(bareQuestionHeadingRegex);
+    if (bareHeadingMatch) {
+      commitCurrentQuestion();
+      currentQuestionNumber = parseInt(bareHeadingMatch[1], 10);
+      expectingStem = true;
+      continue;
+    }
+
     const standNumMatch = line.match(standaloneNumberRegex);
     if (standNumMatch) {
       commitCurrentQuestion();
       currentQuestionNumber = parseInt(standNumMatch[1], 10);
-      currentQuestionText = `Question ${standNumMatch[1]}`;
+      expectingStem = true;
       continue;
     }
 
@@ -221,7 +244,10 @@ export function parseExamHeuristicallyDetailed(
       continue;
     }
 
-    if (currentOptions.length > 0) {
+    if (expectingStem && !currentQuestionText) {
+      currentQuestionText = line;
+      expectingStem = false;
+    } else if (currentOptions.length > 0) {
       currentOptions[currentOptions.length - 1] += ` ${line}`;
     } else if (currentQuestionText) {
       currentQuestionText += ` ${line}`;

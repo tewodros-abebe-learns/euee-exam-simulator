@@ -579,9 +579,9 @@ export default function SubjectDetail({
               >
                 <div className="flex justify-end">
                   <div className="flex gap-4 text-xs font-bold uppercase tracking-widest text-[var(--text-secondary)]">
-                    <button onClick={expandAll} className="hover:text-[#8AB4F8] transition-colors">Expand all</button>
+                    <button onClick={expandAll} className="hover:text-[#8AB4F8] transition-colors">{t('expandAll')}</button>
                     <span>/</span>
-                    <button onClick={collapseAll} className="hover:text-[#8AB4F8] transition-colors">Collapse all</button>
+                    <button onClick={collapseAll} className="hover:text-[#8AB4F8] transition-colors">{t('collapseAll')}</button>
                   </div>
                 </div>
 
@@ -596,8 +596,8 @@ export default function SubjectDetail({
                           <GraduationCap className="w-6 h-6 text-[#8AB4F8]" />
                         </div>
                         <div className="text-left">
-                          <h3 className="text-xl font-bold text-[var(--text-primary)]">{grade}</h3>
-                          <p className="text-sm text-[var(--text-secondary)]">{examsByGrade[grade].length} Exams available</p>
+                          <h3 className="text-xl font-bold text-[var(--text-primary)]">{getGradeName(grade)}</h3>
+                          <p className="text-sm text-[var(--text-secondary)]">{t('examsAvailable', { count: examsByGrade[grade].length })}</p>
                         </div>
                       </div>
                       <ChevronDown className={`w-6 h-6 text-gray-600 transition-transform duration-300 ${expandedGrades[grade] ? 'rotate-180 text-[#8AB4F8]' : ''}`} />
@@ -631,14 +631,14 @@ export default function SubjectDetail({
                                       </div>
                                     </div>
                                     <div className="flex items-center gap-1">
-                                      <button onClick={() => handleRenameExam(exam)} className="p-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors" title="Rename">
+                                      <button onClick={() => handleRenameExam(exam)} className="p-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors" title={t('renameLabel')}>
                                         <Edit2 className="w-3.5 h-3.5" />
                                       </button>
                                       <ExportExamButton exam={exam} />
-                                      <button onClick={() => handleMoveExam(exam)} className="p-1.5 text-[var(--text-secondary)] hover:text-[#8AB4F8] transition-colors" title="Move to Folder">
+                                      <button onClick={() => handleMoveExam(exam)} className="p-1.5 text-[var(--text-secondary)] hover:text-[#8AB4F8] transition-colors" title={t('moveToFolder')}>
                                         <FolderOpen className="w-3.5 h-3.5" />
                                       </button>
-                                      <button onClick={() => setDeletingExamId(exam.id)} className="p-1.5 text-[var(--text-secondary)] hover:text-red-400 transition-colors" title="Delete">
+                                      <button onClick={() => setDeletingExamId(exam.id)} className="p-1.5 text-[var(--text-secondary)] hover:text-red-400 transition-colors" title={t('delete')}>
                                         <Trash2 className="w-3.5 h-3.5" />
                                       </button>
                                     </div>
@@ -646,7 +646,7 @@ export default function SubjectDetail({
 
                                   <div className="flex items-center justify-between">
                                     <div className="flex flex-col">
-                                      <span className="text-[10px] text-[var(--text-secondary)] uppercase tracking-widest mb-1">Status</span>
+                                      <span className="text-[10px] text-[var(--text-secondary)] uppercase tracking-widest mb-1">{t('statusLabel')}</span>
                                       <span className={`text-[10px] font-bold uppercase tracking-widest ${
                                         latestSession?.status === 'COMPLETED' ? 'text-green-400' : 
                                         latestSession?.status === 'IN_PROGRESS' ? 'text-yellow-400' : 'text-gray-500'
@@ -741,7 +741,7 @@ export default function SubjectDetail({
                   ))
                 ) : (
                   <div className="col-span-full py-24 text-center">
-                    <p className="text-[var(--text-secondary)]">No exams currently in progress.</p>
+                    <p className="text-[var(--text-secondary)]">{t('noExamsInProgress')}</p>
                   </div>
                 )}
               </motion.div>
@@ -784,7 +784,7 @@ export default function SubjectDetail({
                   ))
                 ) : (
                   <div className="col-span-full py-24 text-center">
-                    <p className="text-[var(--text-secondary)]">No completed exams yet.</p>
+                    <p className="text-[var(--text-secondary)]">{t('noCompletedExams')}</p>
                   </div>
                 )}
               </motion.div>
@@ -813,7 +813,7 @@ export default function SubjectDetail({
                   <Upload className="w-5 h-5 text-[#8AB4F8]" />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold text-[var(--text-primary)]">Upload Exam File</h3>
+                  <h3 className="text-xl font-bold text-[var(--text-primary)]">{t('uploadExamFile')}</h3>
                   <p className="text-xs text-[var(--text-secondary)] uppercase tracking-widest">{subject} • {uploadModalGrade}</p>
                 </div>
               </div>
@@ -832,8 +832,8 @@ export default function SubjectDetail({
                 <div className="bg-white/5 p-4 rounded-2xl mb-4 group-hover:scale-110 transition-transform">
                   <Upload className="w-8 h-8 text-[#8AB4F8]" />
                 </div>
-                <h4 className="text-sm font-bold text-[var(--text-primary)] mb-1">Click to browse or drag & drop</h4>
-                <p className="text-xs text-[var(--text-secondary)]">Supports PDF, Markdown (.md), or Plain Text (.txt)</p>
+                <h4 className="text-sm font-bold text-[var(--text-primary)] mb-1">{t('dragDropText')}</h4>
+                <p className="text-xs text-[var(--text-secondary)]">{t('supportsFormatsShort')}</p>
               </div>
 
               {dragError && (
@@ -862,7 +862,7 @@ export default function SubjectDetail({
                   <FileText className="w-5 h-5 text-[#8AB4F8]" />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold text-[var(--text-primary)]">Paste Exam Text</h3>
+                  <h3 className="text-xl font-bold text-[var(--text-primary)]">{t('pasteExamText')}</h3>
                   <p className="text-xs text-[var(--text-secondary)] uppercase tracking-widest">{pastingGrade}</p>
                 </div>
               </div>
@@ -870,11 +870,11 @@ export default function SubjectDetail({
                 value={pastedText}
                 onChange={(e) => setPastedText(e.target.value)}
                 disabled={isParsing}
-                placeholder="Paste your exam text or Markdown here..."
+                placeholder={t('pasteExamPlaceholder')}
                 className="w-full h-64 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-2xl p-4 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] resize-none focus:outline-none focus:border-[#8AB4F8] transition-colors mb-6"
               />
               <div className="flex gap-3 justify-end mt-auto">
-                <button onClick={() => setPastingGrade(null)} disabled={isParsing} className="px-6 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">Cancel</button>
+                <button onClick={() => setPastingGrade(null)} disabled={isParsing} className="px-6 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
                 <button onClick={handlePasteSubmit} disabled={isParsing || !pastedText.trim()} className="px-8 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2">
                   {isParsing ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Generate Exam'}
                 </button>
@@ -890,10 +890,10 @@ export default function SubjectDetail({
               <div className="bg-red-400/10 w-12 h-12 rounded-2xl flex items-center justify-center mb-6">
                 <Trash2 className="w-6 h-6 text-red-400" />
               </div>
-              <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">Delete Exam?</h3>
-              <p className="text-[var(--text-secondary)] mb-8">This will permanently remove the exam and all associated progress. This action cannot be undone.</p>
+              <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('deleteExamTitle')}</h3>
+              <p className="text-[var(--text-secondary)] mb-8">{t('deleteExamWarning')}</p>
               <div className="flex gap-3">
-                <button onClick={() => setDeletingExamId(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">Cancel</button>
+                <button onClick={() => setDeletingExamId(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
                 <button onClick={confirmDeleteExam} disabled={isDeleting} className="flex-1 bg-red-400 text-white py-3 rounded-xl font-bold hover:bg-red-500 transition-all flex items-center justify-center gap-2">
                   {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Delete'}
                 </button>
@@ -909,11 +909,11 @@ export default function SubjectDetail({
               <div className="bg-[#8AB4F8]/10 w-12 h-12 rounded-2xl flex items-center justify-center mb-6">
                 <Edit2 className="w-6 h-6 text-[#8AB4F8]" />
               </div>
-              <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">Rename Exam</h3>
-              <p className="text-[var(--text-secondary)] mb-6">Enter a new title for your exam.</p>
-              <input type="text" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} className="w-full bg-[var(--bg-accent)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:border-[#8AB4F8] transition-colors mb-8" placeholder="Exam Title" autoFocus />
+              <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('renameExamTitle')}</h3>
+              <p className="text-[var(--text-secondary)] mb-6">{t('renameExamPrompt')}</p>
+              <input type="text" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} className="w-full bg-[var(--bg-accent)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:border-[#8AB4F8] transition-colors mb-8" placeholder={t('examTitlePlaceholder')} autoFocus />
               <div className="flex gap-3">
-                <button onClick={() => setRenamingExam(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">Cancel</button>
+                <button onClick={() => setRenamingExam(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
                 <button onClick={confirmRename} disabled={isUpdating || !newTitle.trim()} className="flex-1 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
                   {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
                 </button>
@@ -929,7 +929,7 @@ export default function SubjectDetail({
               <div className="bg-[#8AB4F8]/10 w-12 h-12 rounded-2xl flex items-center justify-center mb-6">
                 <FolderOpen className="w-6 h-6 text-[#8AB4F8]" />
               </div>
-              <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">Move Exam</h3>
+              <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('moveExamTitleShort')}</h3>
               <p className="text-[var(--text-secondary)] mb-6">Select a new folder for "{movingExam.title}".</p>
               
               <div className="space-y-6 mb-8">
@@ -973,7 +973,7 @@ export default function SubjectDetail({
               </div>
 
               <div className="flex gap-3">
-                <button onClick={() => setMovingExam(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">Cancel</button>
+                <button onClick={() => setMovingExam(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
                 <button onClick={confirmMove} disabled={isUpdating || !newSubject || !newGrade} className="flex-1 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
                   {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Move'}
                 </button>

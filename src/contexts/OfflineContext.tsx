@@ -8,6 +8,7 @@ import React, {
   type ReactNode,
 } from 'react';
 import { offlineStorage, type OfflineExam, type OfflineSession } from '../lib/offlineStorage';
+import { useLanguage } from './LanguageContext';
 import { db, auth } from '../firebase';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 
@@ -32,11 +33,13 @@ interface OfflineContextType {
   showOfflineToast: boolean;
   dismissOfflineToast: () => void;
   toastMessage: string | null;
+  toastTitle: string | null;
 }
 
 const OfflineContext = createContext<OfflineContextType | undefined>(undefined);
 
 export function OfflineProvider({ children }: { children: ReactNode }) {
+  const { t } = useLanguage();
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isOfflineReady, setIsOfflineReady] = useState<boolean>(false);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
@@ -46,6 +49,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
   const [isInstallable, setIsInstallable] = useState<boolean>(false);
   const [showOfflineToast, setShowOfflineToast] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastTitle, setToastTitle] = useState<string | null>(null);
 
   const refreshStats = useCallback(async () => {
     try {
@@ -98,8 +102,10 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
     const handleAppInstalled = () => {
       setIsInstallable(false);
       setDeferredPrompt(null);
-      setToastMessage('App installed successfully! You can now launch EUEE Exam from your home screen.');
+      setToastMessage(t('appInstalledToast'));
+      setToastTitle(t('appInstalledTitle'));
       setShowOfflineToast(true);
+      window.setTimeout(() => setShowOfflineToast(false), 6000);
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstall);
@@ -109,13 +115,14 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
-  }, []);
+  }, [t]);
 
   // 3. Online/Offline Network Event Listeners & Automatic Sync Trigger
   useEffect(() => {
     const handleOnline = async () => {
       setIsOnline(true);
-      setToastMessage('Internet reconnected. Syncing offline exam sessions with the cloud...');
+      setToastMessage(null);
+      setToastTitle(null);
       setShowOfflineToast(true);
       setTimeout(() => setShowOfflineToast(false), 4000);
       await triggerSync();
@@ -123,7 +130,8 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
 
     const handleOffline = () => {
       setIsOnline(false);
-      setToastMessage('⚡ You are currently offline. Your exams and answers are saved on this device.');
+      setToastMessage(null);
+      setToastTitle(null);
       setShowOfflineToast(true);
     };
 
@@ -291,6 +299,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       showOfflineToast,
       dismissOfflineToast,
       toastMessage,
+      toastTitle,
     }),
     [
       isOnline,
@@ -308,6 +317,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       showOfflineToast,
       dismissOfflineToast,
       toastMessage,
+      toastTitle,
     ]
   );
 

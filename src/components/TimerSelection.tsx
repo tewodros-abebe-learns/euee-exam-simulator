@@ -153,7 +153,7 @@ export default function TimerSelection({ onSelect, currentUser, onSignIn, recomm
               {currentUser ? (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
                   <Check className="w-3 h-3 stroke-[3]" />
-                  <span>Cloud Active</span>
+                  <span>{t('cloudActive')}</span>
                 </span>
               ) : (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/20 flex items-center gap-1">

@@ -7,6 +7,7 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { FileText, Timer, CheckCircle2, Play, Trash2, Clock, Plus, Loader2, Key, AlertCircle, Edit2, Search, ChevronDown, FolderOpen, ChevronRight, Upload } from 'lucide-react';
 import ExamUploadModal from './ExamUploadModal';
+import type { ImportedExam } from '../lib/examSchema';
 import { offlineStorage } from '../lib/offlineStorage';
 import { SUBJECTS, GRADES, matchesSubject, normalizeSubject, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
 
@@ -33,18 +34,18 @@ interface UserExam {
 }
 
 interface DashboardProps {
-  onStartNew: () => void;
   onContinue: (exam: Exam, session: UserExam) => void;
   onRetake: (exam: Exam) => void;
   onViewSummary: (exam: Exam, session: UserExam) => void;
   onSelectSubject: (subject: string) => void;
   onUpload?: (file: File, subject: string, grade: string) => Promise<void>;
   onProcessText?: (text: string, subject: string, grade: string) => Promise<void>;
+  onImportExam?: (exam: ImportedExam) => Promise<void>;
   isParsing?: boolean;
   key?: string;
 }
 
-export default function Dashboard({ onStartNew, onContinue, onRetake, onViewSummary, onSelectSubject, onUpload, onProcessText, isParsing }: DashboardProps) {
+export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelectSubject, onUpload, onProcessText, onImportExam, isParsing }: DashboardProps) {
   const { currentUser, isFirebaseAuthed } = useAuth();
   const { t } = useLanguage();
   const [exams, setExams] = useState<Exam[]>([]);
@@ -509,8 +510,8 @@ export default function Dashboard({ onStartNew, onContinue, onRetake, onViewSumm
                 <Edit2 className="w-6 h-6 text-[#8AB4F8]" />
               </div>
               <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('renameExamTitle')}</h3>
-              <p className="text-[var(--text-secondary)] mb-6">Enter a new title for your exam.</p>
-              <input type="text" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} className="w-full bg-[var(--bg-accent)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:border-[#8AB4F8] transition-colors mb-8" placeholder="Exam Title" autoFocus />
+              <p className="text-[var(--text-secondary)] mb-6">{t('renameExamPrompt')}</p>
+              <input type="text" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} className="w-full bg-[var(--bg-accent)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:border-[#8AB4F8] transition-colors mb-8" placeholder={t('examTitlePlaceholder')} autoFocus />
               <div className="flex gap-3">
                 <button onClick={() => setRenamingExam(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
                 <button onClick={confirmRename} disabled={isUpdating || !newTitle.trim()} className="flex-1 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
@@ -589,6 +590,7 @@ export default function Dashboard({ onStartNew, onContinue, onRetake, onViewSumm
           onClose={() => setIsUploadModalOpen(false)}
           onUpload={onUpload}
           onProcessText={onProcessText}
+          onImportExam={onImportExam}
           isParsing={isParsing}
         />
       )}

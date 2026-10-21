@@ -36,7 +36,6 @@ interface UserExam {
 }
 
 interface HomeProps {
-  onStartNew: () => void;
   onContinue: (exam: Exam, session: UserExam) => void;
   onRetake: (exam: Exam) => void;
   onViewSummary: (exam: Exam, session: UserExam) => void;
@@ -48,7 +47,7 @@ interface HomeProps {
 
 const SUBJECTS: string[] = ['All', ...CANONICAL_SUBJECTS];
 
-export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, onUpload, onProcessText, onImportExam, isParsing }: HomeProps) {
+export default function Home({ onContinue, onRetake, onViewSummary, onUpload, onProcessText, onImportExam, isParsing }: HomeProps) {
   const { currentUser, isFirebaseAuthed } = useAuth();
   const { t } = useLanguage();
   const [exams, setExams] = useState<Exam[]>([]);
@@ -442,7 +441,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                     : 'bg-white/5 text-[var(--text-secondary)] hover:bg-white/10'
                 }`}
               >
-                {subject}
+                {subject === 'All' ? t('allExams') : getSubjectName(subject)}
               </button>
             ))}
           </div>
@@ -476,21 +475,21 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                           <button 
                             onClick={() => handleRenameExam(exam)}
                             className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-                            title="Rename"
+                            title={t('renameLabel')}
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
                           <button 
                             onClick={() => handleMoveExam(exam)}
                             className="p-2 text-[var(--text-secondary)] hover:text-[#8AB4F8] transition-colors"
-                            title="Move to Folder"
+                            title={t('moveToFolder')}
                           >
                             <FolderOpen className="w-4 h-4" />
                           </button>
                           <button 
                             onClick={() => setDeletingExamId(exam.id)}
                             className="p-2 text-[var(--text-secondary)] hover:text-red-400 transition-colors"
-                            title="Delete"
+                            title={t('delete')}
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -499,7 +498,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
 
                       <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2 line-clamp-1">{exam.title}</h3>
                       <p className="text-sm text-[var(--text-secondary)] mb-6 uppercase tracking-widest font-bold">
-                        {exam.subject} {exam.grade && exam.grade !== 'General' && `• ${exam.grade}`}
+                        {getSubjectName(exam.subject)} {exam.grade && exam.grade !== 'General' && `• ${getGradeName(exam.grade)}`}
                       </p>
 
                       <div className="flex items-center justify-between pt-6 border-t border-white/5">
@@ -600,8 +599,8 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                 <Edit2 className="w-6 h-6 text-[#8AB4F8]" />
               </div>
               <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('renameExamTitle')}</h3>
-              <p className="text-[var(--text-secondary)] mb-6">Enter a new title for your exam.</p>
-              <input type="text" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} className="w-full bg-[var(--bg-accent)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:border-[#8AB4F8] transition-colors mb-8" placeholder="Exam Title" autoFocus />
+              <p className="text-[var(--text-secondary)] mb-6">{t('renameExamPrompt')}</p>
+              <input type="text" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} className="w-full bg-[var(--bg-accent)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:border-[#8AB4F8] transition-colors mb-8" placeholder={t('examTitlePlaceholder')} autoFocus />
               <div className="flex gap-3">
                 <button onClick={() => setRenamingExam(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
                 <button onClick={confirmRename} disabled={isUpdating || !newTitle.trim()} className="flex-1 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 disabled:opacity-50">

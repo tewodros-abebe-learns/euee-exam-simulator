@@ -16,7 +16,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { OfflineProvider, useOffline } from './contexts/OfflineContext';
 import { generateExamFromDocument, type Question } from './services/geminiService';
-import { readFileAsBase64, extractTextFromFile, assertSupportedUpload, getFileExtension } from './lib/fileParser';
+import { readFileAsBase64, extractTextFromFile, assertSupportedUpload, getFileExtension, isLocalImportFile } from './lib/fileParser';
 
 import { db, auth } from './firebase';
 import { collection, addDoc, serverTimestamp, doc, getDocs, query, where, setDoc } from 'firebase/firestore';
@@ -25,11 +25,6 @@ import { gradeExam } from './lib/scoring';
 import { parseExamText } from './lib/examImport';
 import { suggestTitleFromFileName, type ImportedExam } from './lib/examSchema';
 import { getExamProgressKey } from './lib/examProgress';
-import * as pdfjs from 'pdfjs-dist';
-
-// Set up PDF.js worker using unpkg for version 4.4.168
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs`;
-
 type View = 'DASHBOARD' | 'UPLOAD' | 'TIMER_SELECTION' | 'EXAM' | 'SUMMARY' | 'SUBJECT_DETAIL';
 type Tab = 'HOME' | 'MY_EXAM';
 
@@ -312,10 +307,12 @@ function AppContent() {
             createdAt: serverTimestamp()
           });
           setCurrentExamId(docRef.id);
+          setOriginalExam((prev: any) => (prev ? { ...prev, id: docRef.id } : prev));
           await saveExamLocally({ id: docRef.id, ...examData });
         } catch(e) {
           console.warn("Could not save exam to Firestore, cached locally:", e);
           setCurrentExamId(newExamId);
+          setOriginalExam((prev: any) => (prev ? { ...prev, id: newExamId } : prev));
           await saveExamLocally({ id: newExamId, ...examData });
         }
       } else {
@@ -368,10 +365,12 @@ function AppContent() {
           createdAt: serverTimestamp(),
         });
         setCurrentExamId(docRef.id);
+        setOriginalExam((prev: any) => (prev ? { ...prev, id: docRef.id } : prev));
         await saveExamLocally({ id: docRef.id, ...examData });
       } catch (e) {
         console.warn('Could not save the imported exam to Firestore, cached locally:', e);
         setCurrentExamId(newExamId);
+        setOriginalExam((prev: any) => (prev ? { ...prev, id: newExamId } : prev));
         await saveExamLocally({ id: newExamId, ...examData });
       }
     } else {
@@ -386,16 +385,23 @@ function AppContent() {
     setSelectedSubject(subject);
     try {
       assertSupportedUpload(file);
-      if (getFileExtension(file.name) === '.json') {
+      if (isLocalImportFile(file)) {
         // Structured files are read on-device: sending them to the AI would
         // only risk reformatting a file that is already correct.
         const raw = await file.text();
         const report = parseExamText(raw, { subject, grade, title: suggestTitleFromFileName(file.name) });
-        if (!report.ok || !report.exam) {
-          throw new Error(report.issues.find((issue) => issue.level === 'error')?.message || 'Could not import that JSON file.');
+        if (report.ok && report.exam) {
+          await handleImportExam(report.exam);
+          return;
         }
-        await handleImportExam(report.exam);
-        return;
+        // A Markdown file may be prose rather than a question list; let the AI
+        // try. A broken JSON file is a real error, so report it directly.
+        if (getFileExtension(file.name) === '.json') {
+          throw new Error(
+            report.issues.find((issue) => issue.level === 'error')?.message ||
+              'Could not import that JSON file.'
+          );
+        }
       }
       if (file.size > 15 * 1024 * 1024) {
         throw new Error('That file is larger than 15MB. Please compress it or upload a smaller section.');
@@ -458,13 +464,16 @@ function AppContent() {
                createdAt: serverTimestamp()
              });
              setCurrentExamId(docRef.id);
+             setOriginalExam((prev: any) => (prev ? { ...prev, id: docRef.id } : prev));
              await saveExamLocally({ id: docRef.id, ...examData });
            } catch(e) {
              setCurrentExamId(newExamId);
+             setOriginalExam((prev: any) => (prev ? { ...prev, id: newExamId } : prev));
              await saveExamLocally({ id: newExamId, ...examData });
            }
         } else {
            setCurrentExamId(newExamId);
+           setOriginalExam((prev: any) => (prev ? { ...prev, id: newExamId } : prev));
            await saveExamLocally({ id: newExamId, ...examData });
         }
       } catch (e) {
@@ -480,7 +489,9 @@ function AppContent() {
     const graded = gradeExam(examQuestions, answers);
     const startedAt = startTime || Date.now();
     const duration = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-    const newSessionId = `session_${Date.now()}`;
+    // Reuse the id of an attempt that was already saved as IN_PROGRESS, so
+    // finishing it updates that row instead of leaving a duplicate behind.
+    const newSessionId = currentSessionId || `session_${Date.now()}`;
     const resolvedExamId = currentExamId || 'exam_local';
     const userId = currentUser?.uid || 'guest';
 
@@ -644,7 +655,7 @@ function AppContent() {
     setUserAnswers(answers);
     setLastResult({
       score: graded.correct,
-      total: graded.total,
+      total: graded.graded,
       percentage: graded.percentage,
       duration: session?.timeSpent || session?.duration || 0,
       completedAt: session?.lastUpdated || Date.now(),
@@ -675,6 +686,7 @@ function AppContent() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         isDarkMode={isDarkMode}
+        showNav={Boolean(currentUser) || isGuestMode}
         toggleTheme={() => setIsDarkMode(!isDarkMode)}
         onSignIn={() => {
            setIsGuestMode(false);
@@ -703,7 +715,6 @@ function AppContent() {
           {view === 'DASHBOARD' && activeTab === 'HOME' && (currentUser || isGuestMode) && (
             <Home
               key="home"
-              onStartNew={() => setView('UPLOAD')}
               onContinue={handleContinueSession}
               onRetake={handleSelectExam}
               onViewSummary={handleViewSummarySession}
@@ -731,11 +742,14 @@ function AppContent() {
           {view === 'DASHBOARD' && activeTab === 'MY_EXAM' && (currentUser || isGuestMode) && (
             <Dashboard 
               key="dashboard" 
-              onStartNew={() => setView('UPLOAD')}
               onContinue={handleContinueSession} 
               onRetake={handleSelectExam} 
               onViewSummary={handleViewSummarySession} 
               onSelectSubject={(subj) => { setSelectedSubject(subj); setView('SUBJECT_DETAIL'); }} 
+              onUpload={handleFileUpload}
+              onProcessText={handleTextSubmit}
+              onImportExam={handleImportExam}
+              isParsing={isParsing}
             />
           )}
 
@@ -892,12 +906,12 @@ function AppContent() {
 
 export default function App() {
   return (
-    <OfflineProvider>
-      <LanguageProvider>
+    <LanguageProvider>
+      <OfflineProvider>
         <AuthProvider>
           <AppContent />
         </AuthProvider>
-      </LanguageProvider>
-    </OfflineProvider>
+      </OfflineProvider>
+    </LanguageProvider>
   );
 }

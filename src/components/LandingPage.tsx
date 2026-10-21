@@ -22,6 +22,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
 import FeatureCard from "./FeatureCard";
+import { SUBJECTS, subjectLabelKey } from "../lib/subjects";
 
 interface LandingPageProps {
   onUpload: (file: File, subject: string, grade?: string) => Promise<void>;
@@ -56,16 +57,7 @@ export default function LandingPage({
   const [inputMethod, setInputMethod] = useState<"file" | "paste">("file");
   const [pastedText, setPastedText] = useState("");
 
-  const subjects = [
-    "General",
-    "Math",
-    "Biology",
-    "English",
-    "Physics",
-    "Chemistry",
-    "Aptitude",
-    "SAT",
-  ];
+  const subjects = SUBJECTS;
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -176,7 +168,7 @@ export default function LandingPage({
                           className="inline-flex items-center gap-1 text-[11px] font-bold text-[#8AB4F8] hover:underline"
                         >
                           <ExternalLink className="w-3 h-3" />
-                          <span>Open app in new tab to sign in</span>
+                          <span>{t('openInNewTabToSignIn')}</span>
                         </a>
                       </div>
                     )}
@@ -341,7 +333,7 @@ export default function LandingPage({
                             : "bg-[var(--bg-secondary)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-gray-500"
                         }`}
                       >
-                        {subject}
+                        {t(subjectLabelKey(subject) as any)}
                       </button>
                     ))}
                   </div>
