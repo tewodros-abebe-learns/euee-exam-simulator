@@ -351,8 +351,8 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelec
     }
   };
 
-  const getSubjectName = (subj: string) => t(subjectLabelKey(subj) as any);
-  const getGradeName = (grd: string) => t(gradeLabelKey(grd) as any);
+  const getSubjectName = (subj: string) => t(subjectLabelKey(subj));
+  const getGradeName = (grd: string) => t(gradeLabelKey(grd));
 
   if (loading) {
     return (

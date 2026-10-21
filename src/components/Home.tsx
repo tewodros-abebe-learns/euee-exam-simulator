@@ -213,8 +213,8 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
     };
   }, [currentUser, isFirebaseAuthed]);
 
-  const getSubjectName = (subj: string) => t(subjectLabelKey(subj) as any);
-  const getGradeName = (grd?: string) => t(gradeLabelKey(grd) as any);
+  const getSubjectName = (subj: string) => t(subjectLabelKey(subj));
+  const getGradeName = (grd?: string) => t(gradeLabelKey(grd));
 
   const filteredExams = useMemo(() => {
     return exams.filter(exam => {

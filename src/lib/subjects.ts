@@ -6,6 +6,9 @@
  * showed a different set of exams depending on which screen you were on.
  */
 
+/** Any key that exists in the English locale (both locales share the same keys). */
+export type TranslationKey = keyof typeof import('../i18n/translations').translations.en;
+
 export const SUBJECTS = [
   'General',
   'Math',
@@ -49,7 +52,7 @@ export function matchesSubject(examSubject: string | undefined | null, subject: 
 }
 
 /** Translation key for a subject label. */
-export function subjectLabelKey(subject: string): string {
+export function subjectLabelKey(subject: string): TranslationKey {
   switch (normalizeSubject(subject)) {
     case 'Math':
       return 'subjectMath';
@@ -72,7 +75,7 @@ export function subjectLabelKey(subject: string): string {
 
 export const GRADES = ['Grade 12', 'Grade 11', 'Grade 10', 'Grade 9', 'General'] as const;
 
-export function gradeLabelKey(grade?: string | null): string {
+export function gradeLabelKey(grade?: string | null): TranslationKey {
   switch (grade) {
     case 'Grade 12':
       return 'grade12';

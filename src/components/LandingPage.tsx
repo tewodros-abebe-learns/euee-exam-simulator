@@ -334,7 +334,7 @@ export default function LandingPage({
                             : "bg-[var(--bg-secondary)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-gray-500"
                         }`}
                       >
-                        {t(subjectLabelKey(subject) as any)}
+                        {t(subjectLabelKey(subject))}
                       </button>
                     ))}
                   </div>

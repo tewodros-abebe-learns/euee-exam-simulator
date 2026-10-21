@@ -109,8 +109,8 @@ export default function SubjectDetail({
 
   const SUBJECTS: readonly string[] = CANONICAL_SUBJECTS;
 
-  const getSubjectName = (subj: string) => t(subjectLabelKey(subj) as any);
-  const getGradeName = (grd: string) => t(gradeLabelKey(grd) as any);
+  const getSubjectName = (subj: string) => t(subjectLabelKey(subj));
+  const getGradeName = (grd: string) => t(gradeLabelKey(grd));
 
   useEffect(() => {
     let isMounted = true;

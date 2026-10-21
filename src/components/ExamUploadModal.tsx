@@ -247,8 +247,8 @@ export default function ExamUploadModal({
     }
   };
 
-  const getSubjectName = (subj: string) => t(subjectLabelKey(subj) as any);
-  const getGradeName = (grd: string) => t(gradeLabelKey(grd) as any);
+  const getSubjectName = (subj: string) => t(subjectLabelKey(subj));
+  const getGradeName = (grd: string) => t(gradeLabelKey(grd));
 
   const tabClass = (value: Tab) =>
     `flex-1 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
