@@ -69,6 +69,81 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
 
 ---
 
+## 📥 Getting Exams Into the App
+
+There are three ways in, in order of cost and reliability. Only the last one
+needs an API key.
+
+### 1. JSON import — exact, offline, free
+
+The canonical format is versioned and documented in
+`src/lib/examSchema.ts`. The upload dialog can download a template; a minimal
+file looks like this:
+
+```json
+{
+  "schemaVersion": 1,
+  "title": "Physics — Unit 3",
+  "subject": "Physics",
+  "grade": "Grade 12",
+  "timeLimit": 3600,
+  "questions": [
+    {
+      "id": "q1",
+      "question": "What is the SI unit of force?",
+      "options": ["Joule", "Newton", "Watt", "Pascal"],
+      "correctAnswerIndex": 1,
+      "explanation": "1 N = 1 kg·m/s²."
+    }
+  ]
+}
+```
+
+The importer is deliberately lenient about *shape* and strict about *facts*:
+
+- `options` may be an array of strings, an array of `{ text }` objects (with
+  `isCorrect: true` supported), or an `{ "A": "…", "B": "…" }` map.
+- The answer may be `correctAnswerIndex` (0-based), `correctAnswer` as a letter,
+  a 1-based number, or the full option text. A top-level
+  `answerKey: { "1": "B" }` map also works.
+- **A missing answer key is never guessed.** Such questions are imported as
+  *ungraded*: you can still practise them, but they are not scored, and the
+  results screen says so.
+- A preview shows exactly what will be added — counts, rejected questions and
+  every warning (duplicate options, repeated stems, out-of-range answers) —
+  before anything is saved.
+
+Every exam can be exported back to the same JSON (or Markdown) from its card
+menu, so a library is portable and never locked to one browser.
+
+### 2. Markdown import — offline, free
+
+Ask any AI (or write it by hand) for:
+
+```
+1. What is the powerhouse of the cell?
+A) Nucleus
+B) Mitochondria
+C) Ribosome
+D) Chloroplast
+
+## Answer Key
+1. B
+```
+
+`## Answer Key` (also "Answers:", "Answer Key: 1. B 2. C", "1-B") is optional;
+without it the exam opens in practice mode. Optional header lines
+`Subject:`, `Grade:` and `Time limit: 60 minutes` are read too.
+
+### 3. AI extraction — needs `GEMINI_API_KEY`
+
+For PDFs, photos of papers, or messy text with no answer key. The server sends
+the document to Gemini and validates the returned JSON. Without a key the
+endpoint answers `503 AI_NOT_CONFIGURED`, and the app never falls back to
+made-up questions.
+
+---
+
 ## 🛠️ Running the Project Locally
 
 ```bash
@@ -85,7 +160,7 @@ npm start            # run the production bundle
 | Variable | Purpose |
 | --- | --- |
 | `PORT` | Server port (default `3000`). |
-| `GEMINI_API_KEY` | Enables AI exam generation. Without it `/api/generate-exam` returns `503 AI_NOT_CONFIGURED` and the UI offers the on-device parser instead. |
+| `GEMINI_API_KEY` | Enables AI exam extraction (optional — JSON/Markdown import works without it). Never prefix with `VITE_`. |
 | `CORS_ORIGIN` | Comma-separated list of allowed browser origins for `/api/*`. When unset, no cross-origin browser requests are allowed. |
 | `VITE_FIREBASE_*` | Firebase project settings (falls back to `firebase-applet-config.json`). |
 

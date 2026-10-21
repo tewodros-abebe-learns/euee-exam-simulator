@@ -314,10 +314,18 @@ INSTRUCTIONS FOR AI TUTOR:
                 </div>
 
                 <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
-                  {missedCount === 0
-                    ? t('allCorrect')
-                    : t('answeredQuestionsCount', { count: result.answered, total: result.total })}
+                  {result.graded === 0
+                    ? t('ungradedPracticeNote')
+                    : missedCount === 0
+                      ? t('allCorrect')
+                      : t('answeredQuestionsCount', { count: result.answered, total: result.total })}
                 </p>
+                {result.ungraded > 0 && (
+                  <p className="mt-2 text-[11px] font-semibold text-amber-500 flex items-center gap-1.5">
+                    <HelpCircle className="w-3.5 h-3.5 shrink-0" />
+                    {t('ungradedNote', { count: result.ungraded })}
+                  </p>
+                )}
               </div>
             </div>
 

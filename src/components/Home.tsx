@@ -7,6 +7,8 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { FileText, Trash2, Edit2, Loader2, Search, CheckCircle2, FolderOpen, Upload, Type } from 'lucide-react';
 import ExamUploadModal from './ExamUploadModal';
+import ExportExamButton from './ExportExamButton';
+import type { ImportedExam } from '../lib/examSchema';
 
 import { offlineStorage } from '../lib/offlineStorage';
 import { SUBJECTS as CANONICAL_SUBJECTS, GRADES, matchesSubject, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
@@ -40,12 +42,13 @@ interface HomeProps {
   onViewSummary: (exam: Exam, session: UserExam) => void;
   onUpload?: (file: File, subject: string, grade: string) => Promise<void>;
   onProcessText?: (text: string, subject: string, grade: string) => Promise<void>;
+  onImportExam?: (exam: ImportedExam) => Promise<void>;
   isParsing?: boolean;
 }
 
 const SUBJECTS: string[] = ['All', ...CANONICAL_SUBJECTS];
 
-export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, onUpload, onProcessText, isParsing }: HomeProps) {
+export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, onUpload, onProcessText, onImportExam, isParsing }: HomeProps) {
   const { currentUser, isFirebaseAuthed } = useAuth();
   const { t } = useLanguage();
   const [exams, setExams] = useState<Exam[]>([]);
@@ -382,7 +385,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
               </button>
               <button
                 type="button"
-                onClick={onStartNew}
+                onClick={() => {
+                  setUploadModalDefaultTab('paste');
+                  setIsUploadModalOpen(true);
+                }}
                 className="w-full bg-white/5 border border-[var(--border-color)] text-[var(--text-primary)] px-5 py-3 rounded-2xl font-bold hover:bg-white/10 transition-all flex items-center justify-center gap-2 text-sm"
               >
                 <Type className="w-4 h-4" />
@@ -466,6 +472,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                           <FileText className="w-6 h-6 text-[#8AB4F8]" />
                         </div>
                         <div className="flex items-center gap-1">
+                          <ExportExamButton exam={exam} />
                           <button 
                             onClick={() => handleRenameExam(exam)}
                             className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
@@ -548,7 +555,15 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
               ) : (
                 <div className="col-span-full py-20 text-center bg-[var(--bg-secondary)] border border-dashed border-[var(--border-color)] rounded-[40px]">
                   <p className="text-[var(--text-secondary)] mb-4">{t('noExamsFound')}</p>
-                  <button onClick={onStartNew} className="text-[#8AB4F8] font-bold hover:underline">{t('uploadFirstOne')}</button>
+                  <button
+                    onClick={() => {
+                      setUploadModalDefaultTab('upload');
+                      setIsUploadModalOpen(true);
+                    }}
+                    className="text-[#8AB4F8] font-bold hover:underline"
+                  >
+                    {t('uploadFirstOne')}
+                  </button>
                 </div>
               )}
             </div>
@@ -665,6 +680,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
           onClose={() => setIsUploadModalOpen(false)}
           onUpload={onUpload}
           onProcessText={onProcessText}
+          onImportExam={onImportExam}
           isParsing={isParsing}
         />
       )}

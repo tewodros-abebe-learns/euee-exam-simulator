@@ -404,19 +404,22 @@ export default function Dashboard({ onStartNew, onContinue, onRetake, onViewSumm
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {recentResults.map(({ session, exam }) => {
-              const score = session.score ?? 0;
               const total = session.total ?? (exam!.questions?.length || 0);
+              const score = session.score ?? 0;
               const percentage = session.percentage ?? (total > 0 ? Math.round((score / total) * 100) : 0);
+              const isPracticeOnly = total === 0;
               return (
                 <div key={session.id} className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl p-4 flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-bold text-[var(--text-primary)] truncate">{exam!.title}</p>
                     <p className="text-[11px] font-semibold text-[var(--text-secondary)] mt-1">
-                      {score}/{total} · {percentage}%
+                      {isPracticeOnly ? t('practiceModeLabel') : `${score}/${total} · ${percentage}%`}
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className={`text-sm font-black ${percentage >= 50 ? 'text-emerald-500' : 'text-red-500'}`}>{percentage}%</span>
+                    {!isPracticeOnly && (
+                      <span className={`text-sm font-black ${percentage >= 50 ? 'text-emerald-500' : 'text-red-500'}`}>{percentage}%</span>
+                    )}
                     <button
                       onClick={() => onViewSummary(exam!, session)}
                       className="px-3 py-2 rounded-xl bg-[var(--bg-accent)] border border-[var(--border-color)] text-[11px] font-bold text-[var(--text-primary)] hover:bg-[var(--card-hover)] transition-colors"

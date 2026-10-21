@@ -315,6 +315,41 @@ Return a strictly valid JSON object matching the schema with a "title" and a "qu
   }
 
   if (!responseText) {
+    const rawError = String(lastError?.message || '');
+    // A rejected key is an operator problem, not a "try again later" spike:
+    // say so instead of making the student retry forever.
+    if (/API_KEY_INVALID|API key not valid|invalid authentication credentials|UNAUTHENTICATED/i.test(rawError)) {
+      return {
+        status: 502,
+        data: {
+          error: "The server's Gemini API key was rejected. Check GEMINI_API_KEY and that the Generative Language API is enabled for that project.",
+          code: "AI_KEY_REJECTED",
+          details: rawError.split('\n')[0]
+        }
+      };
+    }
+    if (/PERMISSION_DENIED|403/i.test(rawError)) {
+      return {
+        status: 502,
+        data: {
+          error: "The configured Gemini key cannot use any of the available models (permission denied or no free-tier quota). Import a JSON/Markdown exam instead, or use a key from a project with access.",
+          code: "AI_ACCESS_DENIED",
+          details: rawError.split('\n')[0]
+        }
+      };
+    }
+
+    if (/fetch failed|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|network|socket hang up/i.test(rawError)) {
+      return {
+        status: 503,
+        data: {
+          error: "The server could not reach Google's AI service (network blocked or DNS unavailable). Import a JSON/Markdown exam instead, or check the deployment's outbound network.",
+          code: "AI_UNREACHABLE",
+          details: rawError.split('\n')[0]
+        }
+      };
+    }
+
     const local = buildLocalFallback(trimmedText, fileName);
     if (local) {
       setCachedExam(textHash, local);

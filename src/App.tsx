@@ -16,12 +16,14 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { OfflineProvider, useOffline } from './contexts/OfflineContext';
 import { generateExamFromDocument, type Question } from './services/geminiService';
-import { readFileAsBase64, extractTextFromFile, assertSupportedUpload } from './lib/fileParser';
+import { readFileAsBase64, extractTextFromFile, assertSupportedUpload, getFileExtension } from './lib/fileParser';
 
 import { db, auth } from './firebase';
 import { collection, addDoc, serverTimestamp, doc, getDocs, query, where, setDoc } from 'firebase/firestore';
 import { offlineStorage } from './lib/offlineStorage';
 import { gradeExam } from './lib/scoring';
+import { parseExamText } from './lib/examImport';
+import { suggestTitleFromFileName, type ImportedExam } from './lib/examSchema';
 import { getExamProgressKey } from './lib/examProgress';
 import * as pdfjs from 'pdfjs-dist';
 
@@ -330,10 +332,71 @@ function AppContent() {
     }
   };
 
+  /**
+   * Adds an exam that was parsed on this device (JSON / Markdown import).
+   * No AI call, no quota, nothing to hallucinate.
+   */
+  const handleImportExam = async (imported: ImportedExam) => {
+    setErrorMessage(null);
+    const title = imported.title?.trim() || 'Imported Exam';
+    const examData = {
+      title,
+      subject: imported.subject || 'General',
+      grade: imported.grade || 'Grade 12',
+      questions: imported.questions,
+      createdBy: currentUser?.uid || 'guest',
+      createdAt: Date.now(),
+      source: 'custom' as const,
+      ...(imported.timeLimit && imported.timeLimit > 0 ? { timeLimit: imported.timeLimit } : {}),
+    };
+
+    setExamQuestions(imported.questions);
+    setExamTitle(title);
+    setSelectedSubject(examData.subject);
+    setSelectedGrade(examData.grade);
+    setRecommendedTimeLimit(imported.timeLimit && imported.timeLimit > 0 ? imported.timeLimit : null);
+    setCurrentSessionId(null);
+    setUserAnswers({});
+
+    const newExamId = `exam_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    setOriginalExam({ ...examData, id: newExamId });
+
+    if (currentUser && isOnline && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid) {
+      try {
+        const docRef = await addDoc(collection(db, 'exams'), {
+          ...examData,
+          createdAt: serverTimestamp(),
+        });
+        setCurrentExamId(docRef.id);
+        await saveExamLocally({ id: docRef.id, ...examData });
+      } catch (e) {
+        console.warn('Could not save the imported exam to Firestore, cached locally:', e);
+        setCurrentExamId(newExamId);
+        await saveExamLocally({ id: newExamId, ...examData });
+      }
+    } else {
+      setCurrentExamId(newExamId);
+      await saveExamLocally({ id: newExamId, ...examData });
+    }
+
+    setView('TIMER_SELECTION');
+  };
+
   const handleFileUpload = async (file: File, subject: string, grade?: string) => {
     setSelectedSubject(subject);
     try {
       assertSupportedUpload(file);
+      if (getFileExtension(file.name) === '.json') {
+        // Structured files are read on-device: sending them to the AI would
+        // only risk reformatting a file that is already correct.
+        const raw = await file.text();
+        const report = parseExamText(raw, { subject, grade, title: suggestTitleFromFileName(file.name) });
+        if (!report.ok || !report.exam) {
+          throw new Error(report.issues.find((issue) => issue.level === 'error')?.message || 'Could not import that JSON file.');
+        }
+        await handleImportExam(report.exam);
+        return;
+      }
       if (file.size > 15 * 1024 * 1024) {
         throw new Error('That file is larger than 15MB. Please compress it or upload a smaller section.');
       }
@@ -423,7 +486,7 @@ function AppContent() {
 
     setLastResult({
       score: graded.correct,
-      total: graded.total,
+      total: graded.graded,
       percentage: graded.percentage,
       duration,
       completedAt: Date.now(),
@@ -437,7 +500,7 @@ function AppContent() {
         userId,
         status: 'COMPLETED',
         score: graded.correct,
-        total: graded.total,
+        total: graded.graded,
         percentage: graded.percentage,
         startTime: startedAt,
         timeLimit: timeLimit || 0,
@@ -466,7 +529,7 @@ function AppContent() {
           status: 'COMPLETED',
           answers,
           score: graded.correct,
-          total: graded.total,
+          total: graded.graded,
           totalQuestions: graded.total,
           percentage: graded.percentage,
           startTime: startedAt,
@@ -557,7 +620,7 @@ function AppContent() {
         const graded = gradeExam(exam.questions || [], session.answers || {});
         setLastResult({
           score: graded.correct,
-          total: graded.total,
+          total: graded.graded,
           percentage: graded.percentage,
           duration: session.timeLimit,
           completedAt: Date.now(),
@@ -646,6 +709,7 @@ function AppContent() {
               onViewSummary={handleViewSummarySession}
               onUpload={handleFileUpload}
               onProcessText={handleTextSubmit}
+              onImportExam={handleImportExam}
               isParsing={isParsing}
             />
           )}

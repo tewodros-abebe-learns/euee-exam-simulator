@@ -27,9 +27,20 @@ export interface HeuristicParseResult {
  *    detected are still returned for review, but the overall result is marked
  *    as low confidence so callers can refuse to treat it as a graded exam.
  */
+export interface HeuristicParseOptions {
+  /**
+   * When true, questions whose answer key was not readable keep
+   * `correctAnswerIndex = -1` instead of defaulting to option A. Used by the
+   * deterministic file importer, where guessing an answer would silently
+   * corrupt a student's score.
+   */
+  keepUnknownAnswers?: boolean;
+}
+
 export function parseExamHeuristicallyDetailed(
   rawText: string,
-  defaultTitle: string = 'Extracted Exam'
+  defaultTitle: string = 'Extracted Exam',
+  parseOptions: HeuristicParseOptions = {}
 ): HeuristicParseResult {
   const empty: HeuristicParseResult = {
     data: null,
@@ -91,7 +102,11 @@ export function parseExamHeuristicallyDetailed(
           question: questionText,
           options: uniqueOptions,
           correctAnswerIndex:
-            currentAnswerIndex !== null && currentAnswerIndex < uniqueOptions.length ? currentAnswerIndex : 0,
+            currentAnswerIndex !== null && currentAnswerIndex < uniqueOptions.length
+              ? currentAnswerIndex
+              : parseOptions.keepUnknownAnswers
+                ? -1
+                : 0,
           explanation: currentExplanation.trim() || 'Extracted from the source document.',
         });
         currentContext = '';

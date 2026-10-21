@@ -1,11 +1,17 @@
 import type { Question } from '../services/geminiService';
 
 export interface GradeSummary {
+  /** Every question in the exam. */
   total: number;
+  /** Questions that carry a usable answer key and were therefore scored. */
+  graded: number;
+  /** Questions imported without an answer key; never counted as wrong. */
+  ungraded: number;
   answered: number;
   correct: number;
   incorrect: number;
   skipped: number;
+  /** Percentage of *graded* questions answered correctly. */
   percentage: number;
 }
 
@@ -40,8 +46,15 @@ export function gradeExam(
   let correct = 0;
   let incorrect = 0;
   let skipped = 0;
+  let ungraded = 0;
 
   (questions || []).forEach((question) => {
+    if (getCorrectAnswer(question) === undefined) {
+      // Imported without an answer key: answering it is still useful practice,
+      // but it must never be scored as wrong.
+      ungraded += 1;
+      return;
+    }
     const answer = answers?.[question.id];
     if (!answer) {
       skipped += 1;
@@ -53,13 +66,16 @@ export function gradeExam(
   });
 
   const total = questions?.length || 0;
+  const graded = total - ungraded;
   return {
     total,
+    graded,
+    ungraded,
     answered: correct + incorrect,
     correct,
     incorrect,
     skipped,
-    percentage: total > 0 ? Math.round((correct / total) * 100) : 0,
+    percentage: graded > 0 ? Math.round((correct / graded) * 100) : 0,
   };
 }
 

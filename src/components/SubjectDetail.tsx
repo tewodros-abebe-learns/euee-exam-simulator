@@ -29,6 +29,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { offlineStorage } from '../lib/offlineStorage';
 import { SUBJECTS as CANONICAL_SUBJECTS, GRADES, matchesSubject, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
+import ExportExamButton from './ExportExamButton';
 
 interface Exam {
   id: string;
@@ -633,6 +634,7 @@ export default function SubjectDetail({
                                       <button onClick={() => handleRenameExam(exam)} className="p-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors" title="Rename">
                                         <Edit2 className="w-3.5 h-3.5" />
                                       </button>
+                                      <ExportExamButton exam={exam} />
                                       <button onClick={() => handleMoveExam(exam)} className="p-1.5 text-[var(--text-secondary)] hover:text-[#8AB4F8] transition-colors" title="Move to Folder">
                                         <FolderOpen className="w-3.5 h-3.5" />
                                       </button>
