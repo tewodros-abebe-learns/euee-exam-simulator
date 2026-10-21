@@ -1,7 +1,7 @@
 export const math2015Exam = {
   id: "euee-2015-math",
   title: "2015 E.C. ESSLCE Mathematics (Natural Science)",
-  subject: "Mathematics",
+  subject: "Math",
   grade: "Grade 12",
   timeLimit: 10800, // 180 minutes (3:00 hours)
   questions: [

@@ -1,16 +1,21 @@
-import { useState, useRef, useEffect, type FormEvent } from 'react';
+import { useState, useRef, useEffect, useMemo, type FormEvent } from 'react';
 import { Timer, ChevronRight, Save, Check, LogIn, Lock, AlertCircle, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../contexts/LanguageContext';
+import { formatDuration } from '../lib/time';
 
 interface TimerSelectionProps {
+  /** 0 means "no time limit" (practice mode). */
   onSelect: (seconds: number, saveProgress: boolean) => void;
   currentUser?: any;
   onSignIn?: () => void;
+  /** Official duration of the selected paper, offered as a shortcut. */
+  recommendedSeconds?: number | null;
+  examTitle?: string;
   key?: string;
 }
 
-export default function TimerSelection({ onSelect, currentUser, onSignIn }: TimerSelectionProps) {
+export default function TimerSelection({ onSelect, currentUser, onSignIn, recommendedSeconds, examTitle }: TimerSelectionProps) {
   const { t } = useLanguage();
   const [customMinutes, setCustomMinutes] = useState<string>('');
   const [saveProgress, setSaveProgress] = useState<boolean>(!!currentUser);
@@ -46,11 +51,20 @@ export default function TimerSelection({ onSelect, currentUser, onSignIn }: Time
     };
   }, [showGuestSavePopup]);
 
-  const options = [
+  const presetOptions = [
     { label: t('minutes45'), seconds: 45 * 60 },
     { label: t('hour1'), seconds: 60 * 60 },
     { label: t('hour1half'), seconds: 90 * 60 },
   ];
+
+  // Put the paper's official duration first when it differs from the presets.
+  const options = useMemo(() => {
+    const recommended = recommendedSeconds && recommendedSeconds > 0
+      ? [{ label: `${t('officialExamTime')} · ${formatDuration(recommendedSeconds)}`, seconds: recommendedSeconds }]
+      : [];
+    const withoutDuplicate = presetOptions.filter(p => p.seconds !== recommendedSeconds);
+    return [...recommended, ...withoutDuplicate];
+  }, [recommendedSeconds, t]);
 
   const handleSaveProgressToggle = (enable: boolean) => {
     if (enable && !currentUser) {
@@ -94,9 +108,14 @@ export default function TimerSelection({ onSelect, currentUser, onSignIn }: Time
         <h2 className="text-3xl md:text-4xl font-black text-[var(--text-primary)] mb-3 tracking-tight">
           {t('setYourPace')}
         </h2>
-        <p className="text-[var(--text-secondary)] mb-10 max-w-md mx-auto leading-relaxed">
+        <p className="text-[var(--text-secondary)] mb-2 max-w-md mx-auto leading-relaxed">
           {t('chooseTimeLimitDesc')}
         </p>
+        {examTitle && (
+          <p className="text-xs font-bold text-[#3b82f6] dark:text-[#8AB4F8] mb-8 max-w-md mx-auto line-clamp-2">
+            {examTitle}
+          </p>
+        )}
         
         {/* Preset Timer Options */}
         <div className="grid gap-3.5 max-w-sm mx-auto mb-8">
@@ -110,6 +129,17 @@ export default function TimerSelection({ onSelect, currentUser, onSignIn }: Time
               <ChevronRight className="w-5 h-5 text-[var(--text-secondary)] group-hover:text-[#3b82f6] dark:group-hover:text-[#8AB4F8] transition-colors" />
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => handleStartWithTimer(0)}
+            className="w-full bg-[var(--bg-secondary)] border border-[var(--border-color)] hover:border-emerald-400 text-[var(--text-primary)] font-bold py-4 px-6 rounded-2xl transition-all hover:bg-[var(--card-hover)] group flex items-center justify-between shadow-xs"
+          >
+            <span className="flex items-center gap-2 text-base">
+              <Timer className="w-4 h-4 text-emerald-400" />
+              {t('practiceUntimed')}
+            </span>
+            <ChevronRight className="w-5 h-5 text-[var(--text-secondary)] group-hover:text-emerald-400 transition-colors" />
+          </button>
         </div>
 
         {/* Save Progress Card & Guest Warning Pop-up */}

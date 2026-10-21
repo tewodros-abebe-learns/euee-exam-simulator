@@ -29,6 +29,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { allOfficialExams } from '../data/sampleExams';
 import { offlineStorage } from '../lib/offlineStorage';
+import { SUBJECTS as CANONICAL_SUBJECTS, GRADES, matchesSubject, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
 
 interface Exam {
   id: string;
@@ -46,6 +47,9 @@ interface UserExam {
   answers: Record<string, string>;
   startTime: number;
   timeLimit: number;
+  score?: number;
+  total?: number;
+  percentage?: number;
   lastUpdated: any;
 }
 
@@ -60,7 +64,6 @@ interface SubjectDetailProps {
   isParsing: boolean;
 }
 
-const GRADES = ['Grade 12', 'Grade 11', 'Grade 10', 'Grade 9', 'General'];
 type Tab = 'Exam' | 'Ongoing' | 'Results';
 
 export default function SubjectDetail({ 
@@ -103,29 +106,10 @@ export default function SubjectDetail({
   const [isUpdating, setIsUpdating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const SUBJECTS = ['General', 'Math', 'Biology', 'English', 'Physics', 'Chemistry', 'SAT'];
+  const SUBJECTS: readonly string[] = CANONICAL_SUBJECTS;
 
-  const getSubjectName = (subj: string) => {
-    switch (subj) {
-      case 'Math': return t('subjectMath');
-      case 'Biology': return t('subjectBiology');
-      case 'English': return t('subjectEnglish');
-      case 'Physics': return t('subjectPhysics');
-      case 'Chemistry': return t('subjectChemistry');
-      case 'SAT': return t('subjectSAT');
-      default: return t('subjectGeneral');
-    }
-  };
-
-  const getGradeName = (grd: string) => {
-    switch (grd) {
-      case 'Grade 12': return t('grade12');
-      case 'Grade 11': return t('grade11');
-      case 'Grade 10': return t('grade10');
-      case 'Grade 9': return t('grade9');
-      default: return t('gradeGeneral');
-    }
-  };
+  const getSubjectName = (subj: string) => t(subjectLabelKey(subj) as any);
+  const getGradeName = (grd: string) => t(gradeLabelKey(grd) as any);
 
   useEffect(() => {
     let isMounted = true;
@@ -138,12 +122,7 @@ export default function SubjectDetail({
         if (!isMounted) return;
 
         // Filter local custom exams for this subject
-        const matchingLocalExams = localExams.filter(e => {
-          if (e.isSample) return false;
-          const s1 = (e.subject || '').toLowerCase().trim();
-          const s2 = (subject || '').toLowerCase().trim();
-          return s2 === 'general' || s1 === s2 || (s2.includes('math') && s1.includes('math'));
-        });
+        const matchingLocalExams = localExams.filter(e => !e.isSample && matchesSubject(e.subject, subject));
 
         setExams(prev => {
           const map = new Map<string, Exam>();
@@ -214,11 +193,7 @@ export default function SubjectDetail({
 
       unsubscribeExams = onSnapshot(examsQuery, (snapshot) => {
         const cloudExams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Exam));
-        const filteredCloud = cloudExams.filter(e => {
-          const s1 = (e.subject || '').toLowerCase().trim();
-          const s2 = (subject || '').toLowerCase().trim();
-          return s2 === 'general' || s1 === s2 || (s2.includes('math') && s1.includes('math'));
-        });
+        const filteredCloud = cloudExams.filter(e => matchesSubject(e.subject, subject));
 
         setExams(prev => {
           const map = new Map<string, Exam>();
@@ -269,17 +244,10 @@ export default function SubjectDetail({
     };
   }, [currentUser, isFirebaseAuthed, subject]);
 
-  const officialExamsForSubject = useMemo(() => {
-    return allOfficialExams.filter(e => {
-      const s1 = (e.subject || '').toLowerCase().trim();
-      const s2 = (subject || '').toLowerCase().trim();
-      if (s2 === 'general') return true;
-      if (s1 === s2) return true;
-      if (s2.includes('math') && s1.includes('math')) return true;
-      if (s2.includes('aptitude') && s1.includes('aptitude')) return true;
-      return false;
-    });
-  }, [subject]);
+  const officialExamsForSubject = useMemo(
+    () => allOfficialExams.filter(e => matchesSubject(e.subject, subject)),
+    [subject]
+  );
 
   const combinedExams = useMemo(() => {
     const customIds = new Set(exams.map(e => e.id));
@@ -289,9 +257,9 @@ export default function SubjectDetail({
 
   const examsByGrade = useMemo(() => {
     const map: Record<string, Exam[]> = {};
-    GRADES.forEach(grade => map[grade] = []);
+    GRADES.forEach(grade => { map[grade] = []; });
     combinedExams.forEach(exam => {
-      if (GRADES.includes(exam.grade)) {
+      if ((GRADES as readonly string[]).includes(exam.grade)) {
         map[exam.grade].push(exam);
       } else {
         map['General'].push(exam);

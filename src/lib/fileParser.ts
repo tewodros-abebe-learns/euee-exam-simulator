@@ -2,6 +2,26 @@
  * Safe client-side file reading and text extraction utilities
  */
 
+export const SUPPORTED_UPLOAD_EXTENSIONS = ['.pdf', '.txt', '.md', '.csv', '.json', '.rtf', '.png', '.jpg', '.jpeg', '.webp'] as const;
+
+export function getFileExtension(fileName: string): string {
+  const match = /\.([^.]+)$/.exec(fileName.toLowerCase());
+  return match ? `.${match[1]}` : '';
+}
+
+export function isSupportedUpload(file: File): boolean {
+  return SUPPORTED_UPLOAD_EXTENSIONS.includes(getFileExtension(file.name) as any);
+}
+
+/** Rejects obviously unsupported files before they are sent to the AI. */
+export function assertSupportedUpload(file: File): void {
+  if (!isSupportedUpload(file)) {
+    throw new Error(
+      'Unsupported file type. Please upload a PDF, an image (PNG/JPG/WebP), or a plain-text/Markdown file.'
+    );
+  }
+}
+
 export function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -39,7 +59,17 @@ export async function extractTextFromFile(file: File): Promise<string> {
   if (fileName.endsWith('.pdf') || file.type === 'application/pdf') {
     try {
       const pdfjsLib = await import('pdfjs-dist');
-      // Set worker if needed or disable worker in modern Vite
+      // Bundle the worker locally: loading it from a CDN broke offline uploads
+      // and made parsing depend on a third-party host.
+      if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+        try {
+          const workerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
+          pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+        } catch {
+          pdfjsLib.GlobalWorkerOptions.workerSrc =
+            'https://unpkg.com/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs';
+        }
+      }
       const arrayBuffer = await file.arrayBuffer();
       const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
       const pdfDoc = await loadingTask.promise;

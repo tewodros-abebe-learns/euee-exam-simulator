@@ -53,7 +53,7 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
   - **Framework**: React 19 + TypeScript + Vite
   - **Styling**: Tailwind CSS with responsive layout and dark/light mode themes
   - **Animations**: Framer Motion (`motion/react`)
-  - **Math & Science Rendering**: KaTeX, `react-katex`, `remark-math`, `rehype-katex`
+  - **Math & Science Rendering**: KaTeX, `remark-math`, `rehype-katex`
   - **Icons**: Lucide React
   - **Client Persistence**: IndexedDB & LocalStorage via custom offline synchronization engine
 
@@ -66,6 +66,31 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
 - **Database & Authentication**:
   - **Cloud Database**: Google Cloud Firestore (provisioned with strict per-user security rules)
   - **Authentication**: Firebase Authentication (Email/Password & Anonymous Guest sessions)
+
+---
+
+## 🛠️ Running the Project Locally
+
+```bash
+npm install          # Node.js 20+ required
+npm run dev          # Express + Vite dev server on http://localhost:3000
+npm run typecheck    # tsc --noEmit
+npm test             # unit tests for scoring, timers, parsing and subjects
+npm run build        # production client (dist/) + server bundle (dist/server.cjs)
+npm start            # run the production bundle
+npm run audit:exams  # data sanity report for the official exam bank
+```
+
+### Environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | Server port (default `3000`). |
+| `GEMINI_API_KEY` | Enables AI exam generation. Without it `/api/generate-exam` returns `503 AI_NOT_CONFIGURED` and the UI offers the on-device parser instead. |
+| `CORS_ORIGIN` | Comma-separated list of allowed browser origins for `/api/*`. When unset, no cross-origin browser requests are allowed. |
+| `VITE_FIREBASE_*` | Firebase project settings (falls back to `firebase-applet-config.json`). |
+
+Deployment: `vercel.json` builds the SPA with `npm run build:client` and serves `api/*` as serverless functions. The API keys stay server-side only.
 
 ---
 

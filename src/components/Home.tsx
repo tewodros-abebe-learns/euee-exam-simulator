@@ -14,6 +14,7 @@ import {
 import ExamUploadModal from './ExamUploadModal';
 
 import { offlineStorage } from '../lib/offlineStorage';
+import { SUBJECTS as CANONICAL_SUBJECTS, GRADES, matchesSubject, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
 
 interface Exam {
   id: string;
@@ -31,6 +32,9 @@ interface UserExam {
   answers: Record<string, string>;
   startTime: number;
   timeLimit: number;
+  score?: number;
+  total?: number;
+  percentage?: number;
   lastUpdated: any;
 }
 
@@ -45,8 +49,7 @@ interface HomeProps {
   isParsing?: boolean;
 }
 
-const SUBJECTS = ['All', 'General', 'Math', 'Biology', 'English', 'Physics', 'Chemistry', 'Aptitude', 'SAT'];
-const GRADES = ['Grade 9', 'Grade 10', 'Grade 11', 'Grade 12', 'General'];
+const SUBJECTS: string[] = ['All', ...CANONICAL_SUBJECTS];
 
 export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, onLoadSample, onUpload, onProcessText, isParsing }: HomeProps) {
   const { currentUser, isFirebaseAuthed } = useAuth();
@@ -215,33 +218,14 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
     };
   }, [currentUser, isFirebaseAuthed]);
 
-  const getSubjectName = (subj: string) => {
-    switch (subj) {
-      case 'Math': return t('subjectMath');
-      case 'Biology': return t('subjectBiology');
-      case 'English': return t('subjectEnglish');
-      case 'Physics': return t('subjectPhysics');
-      case 'Chemistry': return t('subjectChemistry');
-      case 'SAT': return t('subjectSAT');
-      default: return t('subjectGeneral');
-    }
-  };
-
-  const getGradeName = (grd?: string) => {
-    switch (grd) {
-      case 'Grade 12': return t('grade12');
-      case 'Grade 11': return t('grade11');
-      case 'Grade 10': return t('grade10');
-      case 'Grade 9': return t('grade9');
-      default: return t('gradeGeneral');
-    }
-  };
+  const getSubjectName = (subj: string) => t(subjectLabelKey(subj) as any);
+  const getGradeName = (grd?: string) => t(gradeLabelKey(grd) as any);
 
   const filteredExams = useMemo(() => {
     return exams.filter(exam => {
       const matchesSearch = exam.title.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesSubject = selectedSubject === 'All' || exam.subject === selectedSubject;
-      return matchesSearch && matchesSubject;
+      const subjectOk = selectedSubject === 'All' || matchesSubject(exam.subject, selectedSubject);
+      return matchesSearch && subjectOk;
     });
   }, [exams, searchQuery, selectedSubject]);
 
@@ -441,7 +425,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2017 English
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      100 Questions • ESSLCE
+                      {english2017Exam.questions.length} Questions • ESSLCE
+                      {english2017Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-amber-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -452,7 +439,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -481,7 +468,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2017 Mathematics
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      60 Questions • Nat. Sci
+                      {math2017Exam.questions.length} Questions • Nat. Sci
+                      {math2017Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-[#8AB4F8] group-hover:translate-x-0.5 transition-transform gap-1">
@@ -492,7 +482,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -521,7 +511,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2017 Chemistry
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      80 Questions • Full ESSLCE
+                      {chemistry2017Exam.questions.length} Questions • Full ESSLCE
+                      {chemistry2017Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-emerald-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -532,7 +525,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -561,7 +554,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2017 Physics
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      60 Questions • Full ESSLCE
+                      {physics2017Exam.questions.length} Questions • Full ESSLCE
+                      {physics2017Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-purple-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -572,7 +568,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -601,7 +597,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2017 Biology
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      100 Questions • Booklet 351
+                      {biology2017Exam.questions.length} Questions • Booklet 351
+                      {biology2017Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-rose-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -612,7 +611,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -641,7 +640,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2017 Aptitude
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      60 Questions • Verbal & Quant
+                      {aptitude2017Exam.questions.length} Questions • Verbal & Quant
+                      {aptitude2017Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-cyan-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -652,7 +654,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -690,7 +692,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2016 English
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      100 Questions • Booklet 116
+                      {english2016Exam.questions.length} Questions • Booklet 116
+                      {english2016Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-amber-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -701,7 +706,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -730,7 +735,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2016 Math
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      60 Questions • Booklet 110
+                      {math2016Exam.questions.length} Questions • Booklet 110
+                      {math2016Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-blue-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -741,7 +749,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -770,7 +778,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2016 Chemistry
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      80 Questions • Booklet 197
+                      {chemistry2016Exam.questions.length} Questions • Booklet 197
+                      {chemistry2016Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-emerald-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -781,7 +792,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -810,7 +821,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2016 Physics
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      60 Questions • Booklet 175
+                      {physics2016Exam.questions.length} Questions • Booklet 175
+                      {physics2016Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-purple-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -821,7 +835,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -850,7 +864,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2016 Biology
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      100 Questions • Booklet 113
+                      {biology2016Exam.questions.length} Questions • Booklet 113
+                      {biology2016Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-rose-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -861,7 +878,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -890,7 +907,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2016 Aptitude
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      60 Questions • Booklet 094
+                      {aptitude2016Exam.questions.length} Questions • Booklet 094
+                      {aptitude2016Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-cyan-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -901,7 +921,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -939,7 +959,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2015 English
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      120 Questions • Booklet 304
+                      {english2015Exam.questions.length} Questions • Booklet 304
+                      {english2015Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-blue-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -950,7 +973,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -979,7 +1002,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2015 Math
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      65 Questions • Booklet 339
+                      {math2015Exam.questions.length} Questions • Booklet 339
+                      {math2015Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-blue-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -990,7 +1016,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -1019,7 +1045,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2015 Physics
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      50 Questions • Booklet 527
+                      {physics2015Exam.questions.length} Questions • Booklet 527
+                      {physics2015Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-blue-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -1030,7 +1059,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -1059,7 +1088,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2015 Biology
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      100 Questions • Booklet 480
+                      {biology2015Exam.questions.length} Questions • Booklet 480
+                      {biology2015Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-blue-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -1070,7 +1102,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}
@@ -1099,7 +1131,10 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       2015 Chemistry
                     </h3>
                     <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      80 Questions • Booklet 496
+                      {chemistry2015Exam.questions.length} Questions • Booklet 496
+                      {chemistry2015Exam.questions.length < 40 && (
+                        <span className="text-amber-400"> • {t('partialPaper')}</span>
+                      )}
                     </p>
                   </div>
                   <div className="mt-2.5 flex items-center text-[11px] font-bold text-blue-400 group-hover:translate-x-0.5 transition-transform gap-1">
@@ -1110,7 +1145,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
                       </>
                     ) : (
                       <>
-                        <span>Start Exam</span>
+                        <span>{t('startExam')}</span>
                         <ChevronRight className="w-3 h-3" />
                       </>
                     )}

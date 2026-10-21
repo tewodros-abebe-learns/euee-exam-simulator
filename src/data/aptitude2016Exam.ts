@@ -614,7 +614,7 @@ export const aptitude2016Exam = {
         "3√2",
         "2",
         "√2",
-        "3√2"
+        "√6"
       ],
       correctAnswerIndex: 0,
       explanation: "3√4 = 4^{1/3} = 2^{2/3}. Multiplying by 3√2 (2^{1/3}) gives 2^{2/3} * 2^{1/3} = 2^1 = 2 (rational). Hence the rationalizing factor is 3√2."
@@ -625,7 +625,7 @@ export const aptitude2016Exam = {
       options: [
         "9/2",
         "19/2",
-        "9/2",
+        "11/2",
         "13/2"
       ],
       correctAnswerIndex: 0,

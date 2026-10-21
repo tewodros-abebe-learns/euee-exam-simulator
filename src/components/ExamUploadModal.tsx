@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Upload, FileText, Type, X, Sparkles, AlertCircle, Loader2, Info, BookOpen } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
+import { isSupportedUpload, SUPPORTED_UPLOAD_EXTENSIONS } from '../lib/fileParser';
 
 interface ExamUploadModalProps {
   isOpen: boolean;
@@ -13,8 +14,7 @@ interface ExamUploadModalProps {
   defaultGrade?: string;
 }
 
-const SUBJECTS = ['General', 'Math', 'Biology', 'English', 'Physics', 'Chemistry', 'Aptitude', 'SAT'];
-const GRADES = ['Grade 12', 'Grade 11', 'Grade 10', 'Grade 9', 'General'];
+import { SUBJECTS, GRADES, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
 
 export default function ExamUploadModal({
   isOpen,
@@ -72,10 +72,8 @@ export default function ExamUploadModal({
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
 
-    const validExts = ['.pdf', '.md', '.txt', '.docx', '.doc', '.csv', '.rtf'];
-    const hasValid = validExts.some((ext) => file.name.toLowerCase().endsWith(ext));
-    if (!hasValid) {
-      setError('Please upload a PDF, Markdown (.md), Text (.txt), or Word (.docx) document.');
+    if (!isSupportedUpload(file)) {
+      setError('Please upload a PDF, an image (PNG/JPG/WebP), or a plain-text/Markdown file.');
       return;
     }
 
@@ -101,27 +99,8 @@ export default function ExamUploadModal({
     }
   };
 
-  const getSubjectName = (subj: string) => {
-    switch (subj) {
-      case 'Math': return t('subjectMath');
-      case 'Biology': return t('subjectBiology');
-      case 'English': return t('subjectEnglish');
-      case 'Physics': return t('subjectPhysics');
-      case 'Chemistry': return t('subjectChemistry');
-      case 'SAT': return t('subjectSAT');
-      default: return t('subjectGeneral');
-    }
-  };
-
-  const getGradeName = (grd: string) => {
-    switch (grd) {
-      case 'Grade 12': return t('grade12');
-      case 'Grade 11': return t('grade11');
-      case 'Grade 10': return t('grade10');
-      case 'Grade 9': return t('grade9');
-      default: return t('gradeGeneral');
-    }
-  };
+  const getSubjectName = (subj: string) => t(subjectLabelKey(subj) as any);
+  const getGradeName = (grd: string) => t(gradeLabelKey(grd) as any);
 
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
@@ -249,7 +228,7 @@ export default function ExamUploadModal({
               type="file"
               ref={fileInputRef}
               onChange={handleFileChange}
-              accept=".pdf,.md,.txt"
+              accept={SUPPORTED_UPLOAD_EXTENSIONS.join(',')}
               className="hidden"
             />
 

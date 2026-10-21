@@ -3,7 +3,7 @@ import { type Question } from '../services/geminiService';
 export const aptitude2017Exam = {
   id: "euee-2017-aptitude",
   title: "2017 E.C. ESSLCE Scholastic Aptitude Test",
-  subject: "Scholastic Aptitude",
+  subject: "Aptitude",
   grade: "Grade 12",
   timeLimit: 7200, // 120 minutes (2:00 hours)
   questions: [

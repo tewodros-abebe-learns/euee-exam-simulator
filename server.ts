@@ -11,7 +11,7 @@ dotenv.config();
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // ==========================================
   // Proxy & Security Middlewares
@@ -28,11 +28,18 @@ async function startServer() {
     frameguard: false, // REQUIRED for AI Studio preview iframe to work
   }));
 
-  // Enable CORS (Cross-Origin Resource Sharing) for decoupled hosting
+  // CORS: same-origin only unless an explicit allow-list is configured.
+  // (The previous wildcard let any website spend this server's AI quota.)
+  const allowedOrigins = (process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
   app.use(cors({
-    origin: process.env.CORS_ORIGIN || '*', 
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    origin: allowedOrigins.length > 0 ? allowedOrigins : false,
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: false,
   }));
 
   // Rate Limiting (Prevent abuse / DDoS on API routes)
@@ -60,10 +67,15 @@ async function startServer() {
     message: { error: "AI generation quota reached for this hour. Please try again later." }
   });
 
-  app.use(express.json({ limit: '25mb' }));
+  // Base64 uploads are ~15MB of file at most; 20MB of JSON is enough.
+  app.use(express.json({ limit: '20mb' }));
 
   // Apply general limiter to all API routes
   app.use("/api/", apiLimiter);
+  app.use("/api/", (_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    next();
+  });
 
   // API routes FIRST
   app.get("/api/health", (req, res) => {
@@ -73,7 +85,8 @@ async function startServer() {
   // Apply strict limiter to AI generation
   app.post("/api/generate-exam", aiGenerationLimiter, async (req, res) => {
     try {
-      const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+      // `trust proxy` is enabled above, so req.ip reflects the real client.
+      const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
       const result = await processExamGeneration(req.body, clientIp);
       res.status(result.status).json(result.data);
     } catch (error: any) {
@@ -108,9 +121,17 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // Graceful shutdown so containers (Cloud Run, Railway, Docker) stop cleanly.
+  const shutdown = () => {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 10_000).unref();
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 startServer();

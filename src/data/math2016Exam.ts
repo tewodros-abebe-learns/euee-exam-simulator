@@ -3,7 +3,7 @@ import { type Question } from '../services/geminiService';
 export const math2016Exam = {
   id: "euee-2016-math",
   title: "2016 E.C. ESSLCE Mathematics Examination",
-  subject: "Mathematics",
+  subject: "Math",
   grade: "Grade 12",
   timeLimit: 10800, // 180 minutes (3:00 hours)
   questions: [
@@ -157,7 +157,7 @@ export const math2016Exam = {
       options: [
         "(-∞, -1/2] and R",
         "R and (-∞, -1/2]",
-        "R and (-∞, -1/2]",
+        "[-1/2, ∞) and R",
         "(-∞, -1/2) and R"
       ],
       correctAnswerIndex: 0,
@@ -564,7 +564,7 @@ export const math2016Exam = {
       question: "Let z = -a + 2i and w = 5 - bi be two complex numbers. If z = w, what are the values of a and b respectively?",
       options: [
         "5 and -2",
-        "5 and -2",
+        "-5 and 2",
         "5 and 2",
         "-5 and -2"
       ],
