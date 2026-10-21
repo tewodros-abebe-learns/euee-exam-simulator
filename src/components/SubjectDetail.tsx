@@ -30,6 +30,7 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { offlineStorage } from '../lib/offlineStorage';
 import { SUBJECTS as CANONICAL_SUBJECTS, GRADES, matchesSubject, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
 import ExportExamButton from './ExportExamButton';
+import { SUPPORTED_UPLOAD_EXTENSIONS } from '../lib/fileParser';
 
 interface Exam {
   id: string;
@@ -799,7 +800,7 @@ export default function SubjectDetail({
         ref={fileInputRef}
         onChange={handleFileChange}
         className="hidden"
-        accept=".pdf,.md,.txt"
+        accept={SUPPORTED_UPLOAD_EXTENSIONS.join(",")}
       />
 
       {/* Modals */}

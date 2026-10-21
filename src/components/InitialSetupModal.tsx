@@ -67,7 +67,7 @@ export default function InitialSetupModal({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close setup modal"
+            aria-label={t('close')}
             className="absolute top-4 right-4 p-2 rounded-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-accent)] transition-colors"
           >
             <X className="w-4 h-4" />

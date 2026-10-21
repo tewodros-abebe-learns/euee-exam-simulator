@@ -23,6 +23,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
 import FeatureCard from "./FeatureCard";
 import { SUBJECTS, subjectLabelKey } from "../lib/subjects";
+import { SUPPORTED_UPLOAD_EXTENSIONS } from '../lib/fileParser';
 
 interface LandingPageProps {
   onUpload: (file: File, subject: string, grade?: string) => Promise<void>;
@@ -360,7 +361,7 @@ export default function LandingPage({
                       className="hidden"
                       ref={fileInputRef}
                       onChange={handleFileChange}
-                      accept=".pdf,.md,.txt"
+                      accept={SUPPORTED_UPLOAD_EXTENSIONS.join(",")}
                       disabled={!selectedSubject}
                     />
 

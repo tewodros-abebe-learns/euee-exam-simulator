@@ -847,7 +847,7 @@ function AppContent() {
                     </div>
                     <div className="flex-1">
                       <h3 className="font-bold text-sm">
-                        {isBusy ? t('aiHighTrafficNotice') : 'Notice'}
+                        {isBusy ? t('aiHighTrafficNotice') : t('notice')}
                       </h3>
                       <p className="text-xs opacity-90 mt-1 leading-relaxed">{errorMessage}</p>
                       {isBusy && (
