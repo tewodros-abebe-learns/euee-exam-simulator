@@ -65,7 +65,7 @@ export async function generateExamFromDocument(options: GenerateExamOptions): Pr
     if (local) return local;
     throw new Error(
       networkError?.name === 'AbortError'
-        ? 'The AI request timed out. Please try a smaller document or use the official past papers.'
+        ? 'The AI request timed out. Please try again with a smaller document.'
         : 'Could not reach the exam service. Check your internet connection and try again.'
     );
   } finally {

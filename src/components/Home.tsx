@@ -5,12 +5,7 @@ import { db, auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { FileText, Trash2, Edit2, Loader2, Search, ChevronRight, Play, CheckCircle2, AlertCircle, FolderOpen, Zap, Upload, Type, Sparkles, Calculator, BookOpen, GraduationCap, FlaskConical, Atom, Dna, Brain } from 'lucide-react';
-import { 
-  english2017Exam, math2017Exam, chemistry2017Exam, physics2017Exam, biology2017Exam, aptitude2017Exam,
-  english2016Exam, math2016Exam, chemistry2016Exam, physics2016Exam, biology2016Exam, aptitude2016Exam,
-  english2015Exam, math2015Exam, physics2015Exam, chemistry2015Exam, biology2015Exam
-} from '../data/sampleExams';
+import { FileText, Trash2, Edit2, Loader2, Search, CheckCircle2, FolderOpen, Upload, Type } from 'lucide-react';
 import ExamUploadModal from './ExamUploadModal';
 
 import { offlineStorage } from '../lib/offlineStorage';
@@ -43,7 +38,6 @@ interface HomeProps {
   onContinue: (exam: Exam, session: UserExam) => void;
   onRetake: (exam: Exam) => void;
   onViewSummary: (exam: Exam, session: UserExam) => void;
-  onLoadSample?: (sampleData: any) => void;
   onUpload?: (file: File, subject: string, grade: string) => Promise<void>;
   onProcessText?: (text: string, subject: string, grade: string) => Promise<void>;
   isParsing?: boolean;
@@ -51,7 +45,7 @@ interface HomeProps {
 
 const SUBJECTS: string[] = ['All', ...CANONICAL_SUBJECTS];
 
-export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, onLoadSample, onUpload, onProcessText, isParsing }: HomeProps) {
+export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, onUpload, onProcessText, isParsing }: HomeProps) {
   const { currentUser, isFirebaseAuthed } = useAuth();
   const { t } = useLanguage();
   const [exams, setExams] = useState<Exam[]>([]);
@@ -61,7 +55,6 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
   const [selectedSubject, setSelectedSubject] = useState('All');
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [uploadModalDefaultTab, setUploadModalDefaultTab] = useState<'upload' | 'paste'>('upload');
-  const [examYearTab, setExamYearTab] = useState<'2017' | '2016' | '2015'>('2017');
   
   // Modals state
   const [deletingExamId, setDeletingExamId] = useState<string | null>(null);
@@ -94,7 +87,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
         
         if (!isMounted) return;
 
-        const customLocalExams = localExams.filter(e => !e.isSample);
+        const customLocalExams = localExams;
 
         setExams(prev => {
           const map = new Map<string, Exam>();
@@ -325,7 +318,7 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-10 md:py-16">
-      {/* Hero Section: Left Text, Right Sample Exams */}
+      {/* Hero: value proposition + create-your-own-exam panel */}
       <div className="flex flex-col lg:flex-row items-center gap-10 lg:gap-14 mb-16">
         {/* Left Side: Hero Text */}
         <div className="flex-1 text-center lg:text-left">
@@ -347,819 +340,61 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
           </motion.p>
         </div>
 
-        {/* Right Side: Official National Exam Cards (2017 E.C. & 2016 E.C.) */}
-        <div className="w-full lg:w-[540px] shrink-0 flex flex-col gap-2.5">
-          <div className="flex items-center justify-between px-1">
-            <div className="flex items-center gap-1 bg-[var(--bg-secondary)] p-1 rounded-xl border border-[var(--border-color)] overflow-x-auto no-scrollbar">
+        {/* Right Side: Build your own exam */}
+        <div className="w-full lg:w-[400px] shrink-0">
+          <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-[32px] p-6 sm:p-7 shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-11 w-11 rounded-2xl bg-[#8AB4F8]/10 text-[#8AB4F8] flex items-center justify-center shrink-0">
+                <Upload className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-display font-bold text-[var(--text-primary)]">{t('uploadExam')}</h2>
+                <p className="text-[11px] text-[var(--text-secondary)] leading-snug">{t('uploadExamDesc')}</p>
+              </div>
+            </div>
+
+            <ul className="space-y-2 mb-5 text-[11px] text-[var(--text-secondary)]">
+              <li className="flex items-start gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" />
+                <span>{t('buildStepUpload')}</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" />
+                <span>{t('buildStepReview')}</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" />
+                <span>{t('buildStepPractice')}</span>
+              </li>
+            </ul>
+
+            <div className="flex flex-col gap-2">
               <button
                 type="button"
-                onClick={() => setExamYearTab('2017')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center whitespace-nowrap gap-1.5 ${
-                  examYearTab === '2017'
-                    ? 'bg-amber-400 text-black shadow-md shadow-amber-400/20'
-                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                }`}
+                onClick={() => {
+                  setUploadModalDefaultTab('upload');
+                  setIsUploadModalOpen(true);
+                }}
+                className="w-full bg-[#8AB4F8] text-gray-900 px-5 py-3 rounded-2xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 text-sm"
               >
-                <Sparkles className="w-3 h-3" />
-                2017 E.C. (2025)
+                <Upload className="w-4 h-4" />
+                {t('uploadNewExam')}
               </button>
               <button
                 type="button"
-                onClick={() => setExamYearTab('2016')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center whitespace-nowrap gap-1.5 ${
-                  examYearTab === '2016'
-                    ? 'bg-emerald-400 text-black shadow-md shadow-emerald-400/20'
-                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                }`}
+                onClick={onStartNew}
+                className="w-full bg-white/5 border border-[var(--border-color)] text-[var(--text-primary)] px-5 py-3 rounded-2xl font-bold hover:bg-white/10 transition-all flex items-center justify-center gap-2 text-sm"
               >
-                <GraduationCap className="w-3 h-3" />
-                2016 E.C. (2024)
-              </button>
-              <button
-                type="button"
-                onClick={() => setExamYearTab('2015')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center whitespace-nowrap gap-1.5 ${
-                  examYearTab === '2015'
-                    ? 'bg-blue-400 text-black shadow-md shadow-blue-400/20'
-                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                }`}
-              >
-                <BookOpen className="w-3 h-3" />
-                2015 E.C. (2023)
+                <Type className="w-4 h-4" />
+                {t('pasteQuestions')}
               </button>
             </div>
-            <span className="text-[11px] font-medium text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full border border-emerald-400/20 whitespace-nowrap">
-              {examYearTab === '2017' ? '6 Official Papers' : examYearTab === '2016' ? '6 Official Booklets' : '5 Official Booklets'}
-            </span>
           </div>
-
-          <AnimatePresence mode="wait">
-            {examYearTab === '2017' ? (
-              <motion.div
-                key="year-2017-grid"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.2 }}
-                className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-2.5"
-              >
-                {/* 2017 E.C. English Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(english2017Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-amber-400 hover:shadow-amber-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-amber-400/10 text-amber-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <BookOpen className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-amber-400/10 text-amber-400 text-[9px] font-bold rounded-full border border-amber-400/20 uppercase tracking-wider">
-                        2017 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-amber-400 transition-colors line-clamp-1">
-                      2017 English
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {english2017Exam.questions.length} Questions • ESSLCE
-                      {english2017Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-amber-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2017 E.C. Math Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(math2017Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-[#8AB4F8] hover:shadow-[#8AB4F8]/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-[#8AB4F8]/10 text-[#8AB4F8] flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <Calculator className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-[#8AB4F8]/10 text-[#8AB4F8] text-[9px] font-bold rounded-full border border-[#8AB4F8]/20 uppercase tracking-wider">
-                        2017 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-[#8AB4F8] transition-colors line-clamp-1">
-                      2017 Mathematics
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {math2017Exam.questions.length} Questions • Nat. Sci
-                      {math2017Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-[#8AB4F8] group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2017 E.C. Chemistry Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(chemistry2017Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-emerald-400 hover:shadow-emerald-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-emerald-400/10 text-emerald-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <FlaskConical className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-emerald-400/10 text-emerald-400 text-[9px] font-bold rounded-full border border-emerald-400/20 uppercase tracking-wider">
-                        2017 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-emerald-400 transition-colors line-clamp-1">
-                      2017 Chemistry
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {chemistry2017Exam.questions.length} Questions • Full ESSLCE
-                      {chemistry2017Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-emerald-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2017 E.C. Physics Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(physics2017Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-purple-400 hover:shadow-purple-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-purple-400/10 text-purple-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <Atom className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-purple-400/10 text-purple-400 text-[9px] font-bold rounded-full border border-purple-400/20 uppercase tracking-wider">
-                        2017 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-purple-400 transition-colors line-clamp-1">
-                      2017 Physics
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {physics2017Exam.questions.length} Questions • Full ESSLCE
-                      {physics2017Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-purple-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2017 E.C. Biology Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(biology2017Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-rose-400 hover:shadow-rose-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-rose-400/10 text-rose-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <Dna className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-rose-400/10 text-rose-400 text-[9px] font-bold rounded-full border border-rose-400/20 uppercase tracking-wider">
-                        2017 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-rose-400 transition-colors line-clamp-1">
-                      2017 Biology
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {biology2017Exam.questions.length} Questions • Booklet 351
-                      {biology2017Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-rose-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2017 E.C. Aptitude Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(aptitude2017Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-cyan-400 hover:shadow-cyan-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-cyan-400/10 text-cyan-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <Brain className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-cyan-400/10 text-cyan-400 text-[9px] font-bold rounded-full border border-cyan-400/20 uppercase tracking-wider">
-                        2017 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-cyan-400 transition-colors line-clamp-1">
-                      2017 Aptitude
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {aptitude2017Exam.questions.length} Questions • Verbal & Quant
-                      {aptitude2017Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-cyan-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-              </motion.div>
-            ) : examYearTab === '2016' ? (
-              <motion.div
-                key="year-2016-grid"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.2 }}
-                className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-2.5"
-              >
-                {/* 2016 E.C. English Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(english2016Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-amber-400 hover:shadow-amber-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-amber-400/10 text-amber-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <BookOpen className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-amber-400/10 text-amber-400 text-[9px] font-bold rounded-full border border-amber-400/20 uppercase tracking-wider">
-                        2016 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-amber-400 transition-colors line-clamp-1">
-                      2016 English
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {english2016Exam.questions.length} Questions • Booklet 116
-                      {english2016Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-amber-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2016 E.C. Mathematics Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(math2016Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-blue-400 hover:shadow-blue-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-blue-400/10 text-blue-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <Calculator className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-blue-400/10 text-blue-400 text-[9px] font-bold rounded-full border border-blue-400/20 uppercase tracking-wider">
-                        2016 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-blue-400 transition-colors line-clamp-1">
-                      2016 Math
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {math2016Exam.questions.length} Questions • Booklet 110
-                      {math2016Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-blue-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2016 E.C. Chemistry Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(chemistry2016Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-emerald-400 hover:shadow-emerald-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-emerald-400/10 text-emerald-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <FlaskConical className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-emerald-400/10 text-emerald-400 text-[9px] font-bold rounded-full border border-emerald-400/20 uppercase tracking-wider">
-                        2016 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-emerald-400 transition-colors line-clamp-1">
-                      2016 Chemistry
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {chemistry2016Exam.questions.length} Questions • Booklet 197
-                      {chemistry2016Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-emerald-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2016 E.C. Physics Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(physics2016Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-purple-400 hover:shadow-purple-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-purple-400/10 text-purple-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <Atom className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-purple-400/10 text-purple-400 text-[9px] font-bold rounded-full border border-purple-400/20 uppercase tracking-wider">
-                        2016 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-purple-400 transition-colors line-clamp-1">
-                      2016 Physics
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {physics2016Exam.questions.length} Questions • Booklet 175
-                      {physics2016Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-purple-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2016 E.C. Biology Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(biology2016Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-rose-400 hover:shadow-rose-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-rose-400/10 text-rose-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <Dna className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-rose-400/10 text-rose-400 text-[9px] font-bold rounded-full border border-rose-400/20 uppercase tracking-wider">
-                        2016 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-rose-400 transition-colors line-clamp-1">
-                      2016 Biology
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {biology2016Exam.questions.length} Questions • Booklet 113
-                      {biology2016Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-rose-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2016 E.C. Aptitude Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(aptitude2016Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-cyan-400 hover:shadow-cyan-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-cyan-400/10 text-cyan-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <Brain className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-cyan-400/10 text-cyan-400 text-[9px] font-bold rounded-full border border-cyan-400/20 uppercase tracking-wider">
-                        2016 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-cyan-400 transition-colors line-clamp-1">
-                      2016 Aptitude
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {aptitude2016Exam.questions.length} Questions • Booklet 094
-                      {aptitude2016Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-cyan-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="year-2015-grid"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.2 }}
-                className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-2.5"
-              >
-                {/* 2015 E.C. English Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(english2015Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-blue-400 hover:shadow-blue-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-blue-400/10 text-blue-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <BookOpen className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-blue-400/10 text-blue-400 text-[9px] font-bold rounded-full border border-blue-400/20 uppercase tracking-wider">
-                        2015 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-blue-400 transition-colors line-clamp-1">
-                      2015 English
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {english2015Exam.questions.length} Questions • Booklet 304
-                      {english2015Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-blue-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2015 E.C. Math Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(math2015Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-blue-400 hover:shadow-blue-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-blue-400/10 text-blue-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <Calculator className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-blue-400/10 text-blue-400 text-[9px] font-bold rounded-full border border-blue-400/20 uppercase tracking-wider">
-                        2015 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-blue-400 transition-colors line-clamp-1">
-                      2015 Math
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {math2015Exam.questions.length} Questions • Booklet 339
-                      {math2015Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-blue-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2015 E.C. Physics Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(physics2015Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-blue-400 hover:shadow-blue-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-blue-400/10 text-blue-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <Atom className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-blue-400/10 text-blue-400 text-[9px] font-bold rounded-full border border-blue-400/20 uppercase tracking-wider">
-                        2015 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-blue-400 transition-colors line-clamp-1">
-                      2015 Physics
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {physics2015Exam.questions.length} Questions • Booklet 527
-                      {physics2015Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-blue-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2015 E.C. Biology Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(biology2015Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-blue-400 hover:shadow-blue-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-blue-400/10 text-blue-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <Dna className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-blue-400/10 text-blue-400 text-[9px] font-bold rounded-full border border-blue-400/20 uppercase tracking-wider">
-                        2015 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-blue-400 transition-colors line-clamp-1">
-                      2015 Biology
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {biology2015Exam.questions.length} Questions • Booklet 480
-                      {biology2015Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-blue-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-
-                {/* 2015 E.C. Chemistry Exam Card */}
-                <motion.div 
-                  onClick={() => {
-                    if (!isParsing && onLoadSample) {
-                      onLoadSample(chemistry2015Exam);
-                    }
-                  }}
-                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3.5 rounded-2xl flex flex-col justify-between cursor-pointer group shadow-lg hover:border-blue-400 hover:shadow-blue-400/5 transition-all"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="h-8 w-8 rounded-xl bg-blue-400/10 text-blue-400 flex items-center justify-center group-hover:scale-105 transition-transform">
-                        <FlaskConical className="w-4 h-4" />
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-blue-400/10 text-blue-400 text-[9px] font-bold rounded-full border border-blue-400/20 uppercase tracking-wider">
-                        2015 E.C.
-                      </span>
-                    </div>
-                    <h3 className="text-xs sm:text-sm font-display font-bold text-[var(--text-primary)] mb-0.5 group-hover:text-blue-400 transition-colors line-clamp-1">
-                      2015 Chemistry
-                    </h3>
-                    <p className="text-[10px] text-[var(--text-secondary)] line-clamp-1">
-                      {chemistry2015Exam.questions.length} Questions • Booklet 496
-                      {chemistry2015Exam.questions.length < 40 && (
-                        <span className="text-amber-400"> • {t('partialPaper')}</span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="mt-2.5 flex items-center text-[11px] font-bold text-blue-400 group-hover:translate-x-0.5 transition-transform gap-1">
-                    {isParsing ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>{t('loading')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{t('startExam')}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </>
-                    )}
-                  </div>
-                </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
       </div>
 
       <div className="space-y-12">
-        {currentUser ? (
-          <div className="space-y-8">
+        <div className="space-y-8">
             {/* Search & Actions */}
           <div className="flex flex-col md:flex-row gap-4 items-center justify-between mb-8">
             <div className="relative w-full md:max-w-md">
@@ -1319,14 +554,6 @@ export default function Home({ onStartNew, onContinue, onRetake, onViewSummary, 
             </div>
           )}
         </div>
-      ) : (
-          <div className="text-center py-16 bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-3xl p-8 max-w-lg mx-auto">
-            <p className="text-[var(--text-secondary)] mb-6 text-sm">{t('signInPrompt')}</p>
-            <button onClick={() => window.location.reload()} className="bg-[#8AB4F8] text-gray-900 font-bold px-8 py-3 rounded-xl hover:bg-[#AECBFA] transition-all text-sm">
-              {t('signIn')}
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Modals */}

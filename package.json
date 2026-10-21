@@ -13,8 +13,7 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/*.test.ts",
-    "audit:exams": "tsx scripts/audit-exams.ts"
+    "test": "tsx --test src/lib/*.test.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

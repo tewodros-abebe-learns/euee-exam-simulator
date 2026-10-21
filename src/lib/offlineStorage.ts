@@ -3,7 +3,6 @@
  * Powered by IndexedDB for zero-latency, full-fidelity offline test taking & caching.
  */
 
-import { allOfficialExams } from '../data/sampleExams';
 import { type Question } from '../services/geminiService';
 
 const DB_NAME = 'EUEE_Exam_Offline_DB';
@@ -17,9 +16,10 @@ export interface OfflineExam {
   questions: Question[];
   createdBy?: string;
   createdAt: number;
+  /** @deprecated Kept only so older cached records can be purged. */
   isSample?: boolean;
   isOfflineReady?: boolean;
-  source?: 'sample' | 'custom' | 'cloud';
+  source?: 'custom' | 'cloud';
 }
 
 export interface OfflineSession {
@@ -98,10 +98,12 @@ class OfflineStorageManager {
   }
 
   /**
-   * Initialize the offline store and seed the bundled national exams.
-   * Seeding is idempotent: exams already cached are left untouched, so the
-   * app no longer rewrites 1,200 questions (and their createdAt timestamps)
-   * on every single launch.
+   * Initializes the offline store.
+   *
+   * Earlier versions of the app shipped the 2015-2017 national papers inside
+   * the bundle and copied them into IndexedDB on first launch. The bundled
+   * papers are gone, so any records a returning device still has are purged
+   * once here; user-created exams and their sessions are untouched.
    */
   async init(): Promise<void> {
     if (this.readyPromise) return this.readyPromise;
@@ -109,21 +111,12 @@ class OfflineStorageManager {
       try {
         await this.getDB();
         const existing = await this.getAllExams();
-        const existingIds = new Set(existing.map((exam) => exam.id));
-
-        for (const sample of allOfficialExams) {
-          if (existingIds.has(sample.id)) continue;
-          await this.saveExam({
-            id: sample.id,
-            title: sample.title,
-            subject: sample.subject,
-            grade: sample.grade || 'Grade 12',
-            questions: sample.questions,
-            createdAt: Date.now(),
-            isSample: true,
-            isOfflineReady: true,
-            source: 'sample'
-          });
+        const legacySamples = existing.filter((exam) => exam.isSample === true);
+        for (const legacy of legacySamples) {
+          await this.deleteExam(legacy.id);
+        }
+        if (legacySamples.length > 0) {
+          console.info(`Removed ${legacySamples.length} previously bundled past papers from offline storage.`);
         }
       } catch (e) {
         console.warn('Could not initialize offline IndexedDB storage:', e);
@@ -133,7 +126,7 @@ class OfflineStorageManager {
     return this.readyPromise;
   }
 
-  /** Waits for the initial seed so first-load reads never race it. */
+  /** Waits for the initialization sweep so first-load reads never race it. */
   private async whenReady(): Promise<void> {
     if (this.readyPromise) {
       try {

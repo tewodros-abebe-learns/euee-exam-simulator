@@ -27,7 +27,6 @@ import { handleFirestoreError, OperationType } from '../lib/firestoreErrorHandle
 import { db, auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
-import { allOfficialExams } from '../data/sampleExams';
 import { offlineStorage } from '../lib/offlineStorage';
 import { SUBJECTS as CANONICAL_SUBJECTS, GRADES, matchesSubject, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
 
@@ -122,7 +121,7 @@ export default function SubjectDetail({
         if (!isMounted) return;
 
         // Filter local custom exams for this subject
-        const matchingLocalExams = localExams.filter(e => !e.isSample && matchesSubject(e.subject, subject));
+        const matchingLocalExams = localExams.filter(e => matchesSubject(e.subject, subject));
 
         setExams(prev => {
           const map = new Map<string, Exam>();
@@ -244,21 +243,10 @@ export default function SubjectDetail({
     };
   }, [currentUser, isFirebaseAuthed, subject]);
 
-  const officialExamsForSubject = useMemo(
-    () => allOfficialExams.filter(e => matchesSubject(e.subject, subject)),
-    [subject]
-  );
-
-  const combinedExams = useMemo(() => {
-    const customIds = new Set(exams.map(e => e.id));
-    const filteredOfficial = officialExamsForSubject.filter(o => !customIds.has(o.id));
-    return [...filteredOfficial, ...exams];
-  }, [officialExamsForSubject, exams]);
-
   const examsByGrade = useMemo(() => {
     const map: Record<string, Exam[]> = {};
     GRADES.forEach(grade => { map[grade] = []; });
-    combinedExams.forEach(exam => {
+    exams.forEach(exam => {
       if ((GRADES as readonly string[]).includes(exam.grade)) {
         map[exam.grade].push(exam);
       } else {
@@ -266,27 +254,27 @@ export default function SubjectDetail({
       }
     });
     return map;
-  }, [combinedExams]);
+  }, [exams]);
 
   const ongoingExams = useMemo(() => {
     return userExams
       .filter(ue => ue.status === 'IN_PROGRESS')
       .map(ue => ({
         session: ue,
-        exam: combinedExams.find(e => e.id === ue.examId)
+        exam: exams.find(e => e.id === ue.examId)
       }))
       .filter(item => item.exam !== undefined) as { session: UserExam, exam: Exam }[];
-  }, [userExams, combinedExams]);
+  }, [userExams, exams]);
 
   const completedExams = useMemo(() => {
     return userExams
       .filter(ue => ue.status === 'COMPLETED')
       .map(ue => ({
         session: ue,
-        exam: combinedExams.find(e => e.id === ue.examId)
+        exam: exams.find(e => e.id === ue.examId)
       }))
       .filter(item => item.exam !== undefined) as { session: UserExam, exam: Exam }[];
-  }, [userExams, combinedExams]);
+  }, [userExams, exams]);
 
   const toggleGrade = (grade: string) => {
     setExpandedGrades(prev => ({ ...prev, [grade]: !prev[grade] }));

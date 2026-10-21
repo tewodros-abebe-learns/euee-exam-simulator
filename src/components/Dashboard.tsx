@@ -74,7 +74,7 @@ export default function Dashboard({ onStartNew, onContinue, onRetake, onViewSumm
         
         if (!isMounted) return;
 
-        const customLocalExams = localExams.filter(e => !e.isSample);
+        const customLocalExams = localExams;
 
         setExams(prev => {
           const map = new Map<string, Exam>();

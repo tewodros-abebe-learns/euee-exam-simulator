@@ -145,7 +145,7 @@ export default function ExamUploadModal({
           <div className="flex-1">
             <strong className="font-bold block mb-1">Beta Testing Feature</strong>
             <p className="leading-relaxed opacity-90">
-              This upload tool is a new experimental feature and might have some issues processing complex exams. If it doesn't work perfectly, you can always take the official provided exams on the homepage.
+              This upload tool is still experimental and may struggle with complex layouts or scanned handwriting. Check the generated questions before you rely on them for revision.
             </p>
           </div>
         </div>
@@ -317,7 +317,7 @@ export default function ExamUploadModal({
 
         {error && (
           (() => {
-            const isBusy = /busy|high traffic|capacity|rate limit|quota|temporarily|available official/i.test(error);
+            const isBusy = /busy|high traffic|capacity|rate limit|quota|temporarily unavailable/i.test(error);
             if (isBusy) {
               return (
                 <div className="mt-4 p-4 rounded-2xl bg-[#1e3a8a]/20 border border-[#8AB4F8]/40 text-blue-200 text-xs flex flex-col gap-2.5">
@@ -338,7 +338,7 @@ export default function ExamUploadModal({
                       className="px-3.5 py-1.5 bg-[#8AB4F8] text-gray-900 font-bold rounded-xl text-xs hover:bg-[#AECBFA] transition-colors flex items-center gap-1.5 shadow-sm"
                     >
                       <BookOpen className="w-3.5 h-3.5" />
-                      {t('browseOfficialExams')}
+                      {t('backToMyExams')}
                     </button>
                   </div>
                 </div>

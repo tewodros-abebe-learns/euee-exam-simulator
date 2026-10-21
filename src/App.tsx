@@ -183,7 +183,7 @@ function AppContent() {
       
       try {
         const localExams = await offlineStorage.getAllExams();
-        const guestExams = localExams.filter(e => e.createdBy === 'guest' && !e.isSample);
+        const guestExams = localExams.filter(e => e.createdBy === 'guest');
         
         for (const exam of guestExams) {
           if (!isMounted) break;
@@ -295,7 +295,6 @@ function AppContent() {
         questions: result.questions,
         createdBy: currentUser?.uid || 'guest',
         createdAt: Date.now(),
-        isSample: false,
         source: 'custom' as const
       };
       setOriginalExam({ ...examData, id: newExamId });
@@ -374,7 +373,7 @@ function AppContent() {
       localStorage.removeItem(getExamProgressKey(currentExamId, examTitle));
     } catch {}
     
-    // If not already persisted or user selected an official/existing exam without currentExamId
+    // Persist the exam the user just built if it has no id yet
     if (!currentExamId) {
       try {
         const examData = {
@@ -384,7 +383,6 @@ function AppContent() {
           questions: examQuestions,
           createdBy: currentUser?.uid || 'guest',
           createdAt: Date.now(),
-          isSample: false,
           source: 'custom' as const
         };
         
@@ -646,7 +644,6 @@ function AppContent() {
               onContinue={handleContinueSession}
               onRetake={handleSelectExam}
               onViewSummary={handleViewSummarySession}
-              onLoadSample={handleSelectExam}
               onUpload={handleFileUpload}
               onProcessText={handleTextSubmit}
               isParsing={isParsing}
@@ -754,7 +751,7 @@ function AppContent() {
         <AnimatePresence>
           {errorMessage && (
             (() => {
-              const isBusy = /busy|high traffic|capacity|rate limit|quota|temporarily|available official/i.test(errorMessage);
+              const isBusy = /busy|high traffic|capacity|rate limit|quota|temporarily unavailable/i.test(errorMessage);
               return (
                 <motion.div
                   initial={{ opacity: 0, y: 40, scale: 0.95 }}
@@ -788,7 +785,7 @@ function AppContent() {
                             className="text-xs bg-[#8AB4F8] text-gray-900 font-bold px-3 py-1.5 rounded-xl hover:bg-[#AECBFA] transition-colors flex items-center gap-1.5 shadow-sm"
                           >
                             <BookOpen className="w-3.5 h-3.5" />
-                            {t('browseOfficialExams')}
+                            {t('backToMyExams')}
                           </button>
                         )}
                         <button

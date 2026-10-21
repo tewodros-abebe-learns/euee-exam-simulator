@@ -1,7 +1,7 @@
 {
   "name": "EUEE National Exam Simulator",
   "short_name": "EUEE Exam",
-  "description": "Ethiopian University Entrance Exam (ESSLCE) interactive practice platform with full offline capabilities, past papers, and KaTeX math formulas.",
+  "description": "Turn your own PDFs, notes and question banks into interactive timed exams. Works offline.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

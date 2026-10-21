@@ -123,7 +123,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
 
     const handleOffline = () => {
       setIsOnline(false);
-      setToastMessage('⚡ You are currently offline. Full offline practice mode active — all answers and past papers are saved locally.');
+      setToastMessage('⚡ You are currently offline. Your exams and answers are saved on this device.');
       setShowOfflineToast(true);
     };
 
@@ -240,7 +240,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
     await offlineStorage.saveExam(exam);
     // Exams created offline for a signed-in user must be replayed later,
     // otherwise they only ever exist on this device.
-    if (!navigator.onLine && exam.createdBy && exam.createdBy !== 'guest' && !exam.isSample) {
+    if (!navigator.onLine && exam.createdBy && exam.createdBy !== 'guest') {
       await offlineStorage.addToSyncQueue({
         type: 'CREATE_EXAM',
         payload: exam,

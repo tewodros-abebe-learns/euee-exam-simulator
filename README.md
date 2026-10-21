@@ -4,7 +4,7 @@
 [![Open Source](https://img.shields.io/badge/Open%20Source-%E2%9D%A4-brightgreen.svg)]()
 [![Free Tier Ready](https://img.shields.io/badge/Status-Production%20Ready-blue.svg)]()
 
-> A modern, free, and open-source national exam preparation and intelligent learning platform. Seamlessly transforms static past papers, textbook chapters, and study materials into interactive, timed, and graded practice simulations.
+> A modern, free, and open-source exam preparation platform. Turns your own documents, textbook chapters and study materials into interactive, timed and graded practice simulations.
 
 ---
 
@@ -16,7 +16,7 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
 
 ## ✨ Key Features & Capabilities
 
-- 📚 **Comprehensive National Exam Bank**: Includes 17 full official national examinations (2017, 2016, and 2015 E.C.) across Mathematics, English, Physics, Chemistry, Biology, and Scholastic Aptitude Test (SAT) with over 1,200 verified questions.
+- 📚 **Your Own Exam Bank**: Bring your own PDFs, notes, question banks or past papers — the app turns them into a structured, searchable library organised by subject and grade.
 - ⚡ **AI-Powered Exam Generation**: Upload exam PDFs, document scans, or paste raw syllabus text to automatically generate structured multiple-choice questions with answer keys and explanations via Google Gemini.
 - ⏱️ **Real-Time Exam Simulation**: Authentic exam interface featuring customizable countdown timers, question bookmarks, navigation palettes, and instant score breakdowns.
 - 📊 **Performance Analytics & History**: Detailed session review screens highlighting correct answers, explanations, question-by-question timing, and persistent progress metrics.
@@ -34,7 +34,7 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
    - Sign in using your email and password, or click **"Continue as Guest"** for instant anonymous access.
 
 2. **Selecting or Creating an Exam**:
-   - Browse the built-in catalog of official 2017, 2016, and 2015 E.C. national exams by subject and grade.
+   - Upload a PDF or paste text to create your first practice exam, then organise it by subject and grade.
    - Or upload your own PDF / text notes on the home screen to let the AI create a custom practice exam.
 
 3. **Taking the Exam**:
@@ -78,7 +78,6 @@ npm run typecheck    # tsc --noEmit
 npm test             # unit tests for scoring, timers, parsing and subjects
 npm run build        # production client (dist/) + server bundle (dist/server.cjs)
 npm start            # run the production bundle
-npm run audit:exams  # data sanity report for the official exam bank
 ```
 
 ### Environment variables

@@ -30,7 +30,7 @@ export default function OfflineBanner() {
             </span>
             <WifiOff className="w-4 h-4 text-amber-400 shrink-0" />
             <span>
-              <strong className="font-bold">Offline Practice Active</strong> — {cachedExamsCount} past papers ready. Answers will auto-sync when you reconnect.
+              <strong className="font-bold">Offline Practice Active</strong> — {cachedExamsCount} exam(s) available offline. Answers will auto-sync when you reconnect.
             </span>
           </div>
 
@@ -68,7 +68,7 @@ export default function OfflineBanner() {
                 </span>
               </div>
               <p className="text-xs text-slate-300 leading-relaxed">
-                {toastMessage || (isOnline ? 'You are back online. All offline exam progress is synchronized.' : 'Studying offline. You can practice full sample exams without an internet connection.')}
+                {toastMessage || (isOnline ? 'You are back online. Everything is synced.' : 'Studying offline. Your saved exams and answers stay available without an internet connection.')}
               </p>
 
               {isOnline && pendingSyncCount > 0 && (

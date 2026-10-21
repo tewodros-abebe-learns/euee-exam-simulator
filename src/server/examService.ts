@@ -156,7 +156,7 @@ export async function processExamGeneration(body: ExamRequestBody, clientIp: str
     return {
       status: 503,
       data: {
-        error: "AI exam generation is not configured on this server. Please set GEMINI_API_KEY, or practise with the official past papers instead.",
+        error: "AI exam generation is not configured on this server. Ask the administrator to set GEMINI_API_KEY.",
         code: "AI_NOT_CONFIGURED"
       }
     };
@@ -323,7 +323,7 @@ Return a strictly valid JSON object matching the schema with a "title" and a "qu
     return {
       status: 503,
       data: {
-        error: "AI exam extraction is temporarily busy. Please take any of the available official past exams in the library while this feature resets.",
+        error: "AI exam extraction is temporarily busy. Please try again in a few minutes.",
         isBusy: true,
         details: lastError?.message || "Candidate models are currently busy."
       }
