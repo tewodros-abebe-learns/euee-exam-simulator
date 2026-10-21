@@ -79,13 +79,15 @@ export function gradeExam(
   };
 }
 
-export type AnswerStatus = 'correct' | 'incorrect' | 'skipped';
+export type AnswerStatus = 'correct' | 'incorrect' | 'skipped' | 'ungraded';
 
 export function getAnswerStatus(
   question: Question,
   answers: Record<string, string> = {}
 ): AnswerStatus {
   const answer = answers?.[question.id];
+  // A question without a usable key can never be right or wrong.
+  if (getCorrectAnswer(question) === undefined) return answer ? 'ungraded' : 'skipped';
   if (!answer) return 'skipped';
   return isAnswerCorrect(question, answer) ? 'correct' : 'incorrect';
 }

@@ -402,7 +402,15 @@ INSTRUCTIONS FOR AI TUTOR:
                               <p className="flex items-start gap-2">
                                 <span className="font-bold text-[var(--text-secondary)] shrink-0">{t('yourAnswer')}:</span>
                                 {userAnswer ? (
-                                  <span className={status === 'correct' ? 'text-emerald-500 font-semibold' : 'text-red-500 font-semibold'}>
+                                  <span
+                                    className={
+                                      status === 'correct'
+                                        ? 'text-emerald-500 font-semibold'
+                                        : status === 'incorrect'
+                                          ? 'text-red-500 font-semibold'
+                                          : 'text-[var(--text-primary)] font-semibold'
+                                    }
+                                  >
                                     {userAnswer}
                                   </span>
                                 ) : (
@@ -411,7 +419,9 @@ INSTRUCTIONS FOR AI TUTOR:
                               </p>
                               <p className="flex items-start gap-2">
                                 <span className="font-bold text-[var(--text-secondary)] shrink-0">{t('correctAnswer')}:</span>
-                                <span className="text-emerald-500 font-semibold">{correctAnswer ?? '—'}</span>
+                                <span className={correctAnswer ? 'text-emerald-500 font-semibold' : 'text-[var(--text-secondary)] italic'}>
+                                  {correctAnswer ?? t('noAnswerKey')}
+                                </span>
                               </p>
                             </div>
 

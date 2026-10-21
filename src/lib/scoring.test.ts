@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gradeExam, isAnswerCorrect, getCorrectAnswer, filterValidQuestions } from './scoring';
+import { gradeExam, isAnswerCorrect, getCorrectAnswer, getAnswerStatus, filterValidQuestions } from './scoring';
 import type { Question } from '../services/geminiService';
 
 const q = (id: string, options: string[], correctAnswerIndex: number): Question => ({
@@ -75,4 +75,10 @@ test('structurally broken AI questions are filtered out', () => {
   ];
   const filtered = filterValidQuestions([valid, ...invalid]);
   assert.deepEqual(filtered.map((item) => item.id), ['ok']);
+});
+
+test('a question without a key is never marked wrong in the review', () => {
+  const ungraded = q('nokey', ['a', 'b'], -1);
+  assert.equal(getAnswerStatus(ungraded, { nokey: 'b' }), 'ungraded');
+  assert.equal(getAnswerStatus(ungraded, {}), 'skipped');
 });
