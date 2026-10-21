@@ -21,21 +21,26 @@ import {
   Compass,
   BookOpen,
   Maximize,
-  Minimize
+  Minimize,
+  LogOut,
+  Home
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Question } from '../services/geminiService';
 import LatexText from './LatexText';
 import { useLanguage } from '../contexts/LanguageContext';
+import { formatClock, computeDeadline, remainingSeconds } from '../lib/time';
+import { getExamProgressKey } from '../lib/examProgress';
 
 interface ExamInterfaceProps {
   questions: Question[];
   onComplete: (answers?: Record<string, string>) => void;
-  onBack: () => void;
+  onBack: (answers?: Record<string, string>) => void;
   saveAnswer: (questionId: string, answer: string) => void;
   initialAnswers?: Record<string, string>;
   startTime: number;
   timeLimit: number;
+  examId?: string | null;
   examTitle: string;
   subject: string;
   grade: string;
@@ -51,6 +56,7 @@ export default function ExamInterface({
   initialAnswers = {},
   startTime,
   timeLimit,
+  examId,
   examTitle,
   subject,
   grade,
@@ -58,7 +64,9 @@ export default function ExamInterface({
   isDarkMode
 }: ExamInterfaceProps) {
   const { t } = useLanguage();
-  const storageKey = useMemo(() => `exam_progress_${examTitle.replace(/\s+/g, '_')}`, [examTitle]);
+  // Progress is keyed by the exam identity (never by title alone) so that a
+  // retake of the same paper can never resurrect the previous attempt's choices.
+  const storageKey = useMemo(() => getExamProgressKey(examId, examTitle), [examId, examTitle]);
   const zoomContainerRef = useRef<HTMLDivElement>(null);
   const sideOverviewRef = useRef<HTMLElement>(null);
   const [isFullScreen, setIsFullScreen] = useState(false);
@@ -91,60 +99,63 @@ export default function ExamInterface({
     }
   };
 
+  // A deadline is derived from startTime + timeLimit. `null` means untimed.
+  const [deadline, setDeadline] = useState<number | null>(() => computeDeadline(startTime, timeLimit));
+  const [timeLeft, setTimeLeft] = useState<number>(() =>
+    remainingSeconds(computeDeadline(startTime, timeLimit)) ?? 0
+  );
+
+  const savedProgress = useMemo(() => {
+    if (!saveProgress) return null;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      return parsed as {
+        currentIndex?: number;
+        selectedAnswers?: Record<string, string>;
+        flaggedQuestions?: number[];
+        deadline?: number | null;
+      };
+    } catch {
+      return null;
+    }
+  }, [storageKey, saveProgress]);
+
   const [currentIndex, setCurrentIndex] = useState(() => {
-    if (!saveProgress) return 0;
-    const saved = localStorage.getItem(storageKey);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return parsed.currentIndex ?? 0;
-      } catch (e) { return 0; }
-    }
-    return 0;
+    const saved = savedProgress?.currentIndex;
+    if (typeof saved !== 'number' || !Number.isInteger(saved)) return 0;
+    return Math.min(Math.max(0, saved), Math.max(0, questions.length - 1));
   });
 
-  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>(() => {
-    if (!saveProgress) return initialAnswers;
-    const saved = localStorage.getItem(storageKey);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return { ...initialAnswers, ...(parsed.selectedAnswers || {}) };
-      } catch (e) { return initialAnswers; }
-    }
-    return initialAnswers;
-  });
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>(
+    () => ({ ...initialAnswers, ...(savedProgress?.selectedAnswers || {}) })
+  );
 
-  const [flaggedQuestions, setFlaggedQuestions] = useState<Set<number>>(() => {
-    if (!saveProgress) return new Set();
-    const saved = localStorage.getItem(storageKey);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return new Set(parsed.flaggedQuestions || []);
-      } catch (e) { return new Set(); }
+  const [flaggedQuestions, setFlaggedQuestions] = useState<Set<number>>(
+    () => new Set(Array.isArray(savedProgress?.flaggedQuestions) ? savedProgress!.flaggedQuestions : [])
+  );
+
+  // Restore the absolute deadline saved with the attempt (survives refresh)
+  useEffect(() => {
+    const savedDeadline = savedProgress?.deadline;
+    if (typeof savedDeadline === 'number' && savedDeadline > 0 && timeLimit > 0) {
+      setDeadline(savedDeadline);
+      setTimeLeft(remainingSeconds(savedDeadline) ?? 0);
     }
-    return new Set();
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [showExitModal, setShowExitModal] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [showZoomSlider, setShowZoomSlider] = useState(false);
   const [showZoomHint, setShowZoomHint] = useState(true);
-  const [timeLeft, setTimeLeft] = useState<number>(() => {
-    if (saveProgress) {
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          if (parsed.timeLeft !== undefined) return parsed.timeLeft;
-        } catch (e) {}
-      }
-    }
-    const elapsed = Math.floor((Date.now() - startTime) / 1000);
-    return Math.max(0, timeLimit - elapsed);
-  });
+  const hasSubmittedRef = useRef(false);
+  const answersRef = useRef(selectedAnswers);
+  answersRef.current = selectedAnswers;
 
   // Close Zoom slider & hint bubble when clicking anywhere outside
   useEffect(() => {
@@ -165,11 +176,30 @@ export default function ExamInterface({
     };
   }, [showZoomSlider, showZoomHint]);
 
-  // Keyboard Navigation
+  // Keyboard Navigation (arrows navigate, A-D / 1-4 select an option)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (showSubmitModal) return;
-      
+      if (showSubmitModal || showExitModal) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      const key = e.key.toUpperCase();
+      const optionIndex = /^[A-E]$/.test(key)
+        ? key.charCodeAt(0) - 65
+        : /^[1-5]$/.test(key)
+          ? Number(key) - 1
+          : -1;
+      if (optionIndex >= 0) {
+        const option = questions[currentIndex]?.options?.[optionIndex];
+        if (option !== undefined) {
+          e.preventDefault();
+          handleOptionSelectRef.current(option);
+        }
+        return;
+      }
+
       if (e.key === 'ArrowRight') {
         if (currentIndex < questions.length - 1) {
           setCurrentIndex(prev => prev + 1);
@@ -183,7 +213,7 @@ export default function ExamInterface({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentIndex, questions.length, showSubmitModal]);
+  }, [currentIndex, questions, showSubmitModal, showExitModal]);
 
   // Auto-scroll active question in the side Exam Overview sidebar
   useEffect(() => {
@@ -202,60 +232,61 @@ export default function ExamInterface({
         currentIndex,
         selectedAnswers,
         flaggedQuestions: Array.from(flaggedQuestions),
-        timeLeft,
+        deadline,
+        timeLimit,
+        startTime,
         lastSaved: Date.now()
       };
       localStorage.setItem(storageKey, JSON.stringify(stateToSave));
     } catch (storageError) {
       console.warn("Could not auto-save exam progress to localStorage (e.g. private mode or storage quota):", storageError);
     }
-  }, [currentIndex, selectedAnswers, flaggedQuestions, timeLeft, storageKey, saveProgress]);
+  }, [currentIndex, selectedAnswers, flaggedQuestions, deadline, timeLimit, startTime, storageKey, saveProgress]);
 
-  // Timer Logic
+  // Timer Logic — always recomputed from the absolute deadline so that
+  // throttled background tabs and sleep cannot stretch the exam clock.
   useEffect(() => {
-    if (timeLeft <= 0) return;
-    const timer = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, []); // Only run once on mount, state updates internally
-
-  const hasSubmittedRef = useRef(false);
-
-  useEffect(() => {
-    if (timeLeft === 0 && !hasSubmittedRef.current) {
-      hasSubmittedRef.current = true;
-      if (saveProgress) {
-        try {
-          localStorage.removeItem(storageKey);
-        } catch {}
-      }
-      onComplete(selectedAnswers);
+    if (deadline === null) {
+      setTimeLeft(0);
+      return;
     }
-  }, [timeLeft, saveProgress, storageKey, onComplete, selectedAnswers]);
+    const tick = () => setTimeLeft(remainingSeconds(deadline) ?? 0);
+    tick();
+    const timer = window.setInterval(tick, 500);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') tick();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [deadline]);
 
-  const formatTime = (seconds: number) => {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return `${h > 0 ? h + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
+  const isUntimed = deadline === null;
+
+  // Auto-submit exactly once when the countdown reaches zero
+  useEffect(() => {
+    if (isUntimed || timeLeft > 0 || hasSubmittedRef.current) return;
+    hasSubmittedRef.current = true;
+    try {
+      localStorage.removeItem(storageKey);
+    } catch {}
+    onComplete(answersRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeLeft, isUntimed]);
+
+  const formatTime = formatClock;
 
   const handleOptionSelect = (option: string) => {
     const currentQuestion = questions ? questions[currentIndex] : undefined;
     if (!currentQuestion || !currentQuestion.id) return;
-    const newAnswers = { ...selectedAnswers, [currentQuestion.id]: option };
-    setSelectedAnswers(newAnswers);
+    setSelectedAnswers(prev => ({ ...prev, [currentQuestion.id]: option }));
     // Always update parent state
     saveAnswer(currentQuestion.id, option);
   };
+  const handleOptionSelectRef = useRef(handleOptionSelect);
+  handleOptionSelectRef.current = handleOptionSelect;
 
   const handleNext = () => {
     if (currentIndex < questions.length - 1) {
@@ -272,8 +303,18 @@ export default function ExamInterface({
   };
 
   const handleSubmit = () => {
-    if (saveProgress) localStorage.removeItem(storageKey);
+    if (hasSubmittedRef.current) return;
+    hasSubmittedRef.current = true;
+    try {
+      localStorage.removeItem(storageKey);
+    } catch {}
+    setShowSubmitModal(false);
     onComplete(selectedAnswers);
+  };
+
+  const handleExit = () => {
+    setShowExitModal(false);
+    onBack(selectedAnswers);
   };
 
   const toggleFlag = () => {
@@ -287,6 +328,17 @@ export default function ExamInterface({
       return next;
     });
   };
+
+  // Warn before leaving/refreshing mid-exam so answers are not lost silently
+  useEffect(() => {
+    if (hasSubmittedRef.current) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   const [showBlockDirections, setShowBlockDirections] = useState(false);
 
@@ -400,14 +452,14 @@ export default function ExamInterface({
     return (
       <div className="flex flex-col h-full items-center justify-center bg-[var(--bg-primary)] text-[var(--text-primary)] p-6">
         <AlertTriangle className="w-12 h-12 text-yellow-400 mb-4" />
-        <h2 className="text-2xl font-bold mb-2">No Questions Found</h2>
-        <p className="text-[var(--text-secondary)] mb-6 text-center">We couldn't extract any questions from the document.</p>
-        <button onClick={onBack} className="bg-[#8AB4F8] text-gray-900 px-6 py-2.5 rounded-xl font-bold hover:bg-[#AECBFA] transition-all">Back to Dashboard</button>
+        <h2 className="text-2xl font-bold mb-2">{t('noQuestionsFound')}</h2>
+        <p className="text-[var(--text-secondary)] mb-6 text-center">{t('noQuestionsFoundDesc')}</p>
+        <button onClick={() => onBack()} className="bg-[#8AB4F8] text-gray-900 px-6 py-2.5 rounded-xl font-bold hover:bg-[#AECBFA] transition-all">{t('backToDashboard')}</button>
       </div>
     );
   }
 
-  const isWarningTime = timeLeft <= 300; // 5 minutes
+  const isWarningTime = !isUntimed && timeLeft <= 300; // 5 minutes
 
   return (
     <div className="flex flex-col h-full bg-[var(--bg-primary)] text-[var(--text-primary)] overflow-hidden transition-colors duration-300">
@@ -449,9 +501,9 @@ export default function ExamInterface({
             <div className="sticky top-0 z-20 flex justify-between items-center mb-4 gap-2 sm:gap-3 py-2.5 px-2 bg-[var(--bg-primary)]/90 backdrop-blur-md rounded-b-2xl border-b border-[var(--border-color)]">
               <div className="flex items-center gap-1.5 sm:gap-2 relative" ref={zoomContainerRef}>
                 <button 
-                  onClick={onBack}
+                  onClick={() => setShowExitModal(true)}
                   className="flex items-center gap-1.5 bg-[var(--bg-secondary)] border border-[var(--border-color)] px-3 sm:px-4 py-2 rounded-2xl shadow-xs hover:bg-[var(--card-hover)] transition-colors text-[var(--text-secondary)] hover:text-[var(--text-primary)] font-bold text-xs sm:text-sm"
-                  title="Exit Exam"
+                  title={t('exitExamTitle')}
                 >
                   <ChevronLeft className="w-4 h-4" />
                   <span>{t('exit')}</span>
@@ -534,7 +586,7 @@ export default function ExamInterface({
                           <button 
                             onClick={() => setZoomLevel(prev => Math.max(0.6, parseFloat((prev - 0.1).toFixed(1))))} 
                             className="p-2 rounded-xl bg-[var(--bg-accent)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--card-hover)] transition-colors"
-                            title="Decrease text size"
+                            title={t('decreaseTextSize')}
                           >
                             <Minus className="w-4 h-4" />
                           </button>
@@ -552,7 +604,7 @@ export default function ExamInterface({
                           <button 
                             onClick={() => setZoomLevel(prev => Math.min(1.8, parseFloat((prev + 0.1).toFixed(1))))} 
                             className="p-2 rounded-xl bg-[var(--bg-accent)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--card-hover)] transition-colors"
-                            title="Increase text size"
+                            title={t('increaseTextSize')}
                           >
                             <Plus className="w-4 h-4" />
                           </button>
@@ -605,10 +657,14 @@ export default function ExamInterface({
               </div>
               
               <div className="flex items-center gap-2">
-                <div className="flex items-center gap-2 bg-[var(--bg-secondary)] border border-[var(--border-color)] px-3 sm:px-4 py-2 rounded-2xl shadow-xs">
+                <div
+                  className="flex items-center gap-2 bg-[var(--bg-secondary)] border border-[var(--border-color)] px-3 sm:px-4 py-2 rounded-2xl shadow-xs"
+                  role="timer"
+                  aria-live={isWarningTime ? 'assertive' : 'off'}
+                >
                   <Clock className={`w-4 h-4 ${isWarningTime ? 'text-red-500 animate-pulse' : 'text-[#3b82f6] dark:text-[#8AB4F8]'}`} />
                   <span className={`font-mono text-xs sm:text-sm font-bold ${isWarningTime ? 'text-red-500' : 'text-[var(--text-primary)]'}`}>
-                    {formatTime(timeLeft)}
+                    {isUntimed ? t('untimed') : formatTime(timeLeft)}
                   </span>
                 </div>
               </div>
@@ -697,7 +753,7 @@ export default function ExamInterface({
                     <div className="w-full mb-6 p-4 sm:p-5 bg-[var(--context-box-bg)] border-l-4 border-[var(--context-box-border)] rounded-r-2xl text-[var(--text-primary)] italic text-sm md:text-base font-normal whitespace-pre-wrap leading-relaxed shadow-xs">
                       <div className="flex items-center gap-1.5 text-xs font-bold not-italic mb-1.5 text-[var(--text-secondary)]">
                         <Info className="w-3.5 h-3.5" />
-                        <span>Context / Data</span>
+                        <span>{t('contextDataLabel')}</span>
                       </div>
                       <LatexText text={questionSpecificContext} />
                     </div>
@@ -875,6 +931,52 @@ export default function ExamInterface({
           </div>
         </aside>
       </div>
+
+      {/* Exit Confirmation Modal */}
+      <AnimatePresence>
+        {showExitModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowExitModal(false)}
+              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.92, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 16 }}
+              role="dialog"
+              aria-modal="true"
+              className="relative bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-[28px] p-7 md:p-9 max-w-md w-full shadow-2xl text-center"
+            >
+              <div className="bg-amber-500/10 w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-5">
+                <LogOut className="w-7 h-7 text-amber-500" />
+              </div>
+              <h2 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('exitExamTitle')}</h2>
+              <p className="text-sm text-[var(--text-secondary)] mb-7 leading-relaxed">
+                {saveProgress ? t('exitExamSavedDesc') : t('exitExamLostDesc')}
+              </p>
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => setShowExitModal(false)}
+                  className="w-full bg-[#8AB4F8] text-gray-900 py-3.5 rounded-2xl font-bold hover:bg-[#AECBFA] transition-all"
+                >
+                  {t('keepWorking')}
+                </button>
+                <button
+                  onClick={handleExit}
+                  className="w-full bg-[var(--bg-accent)] text-[var(--text-primary)] py-3.5 rounded-2xl font-bold hover:bg-[var(--card-hover)] transition-all border border-[var(--border-color)] flex items-center justify-center gap-2"
+                >
+                  <Home className="w-4 h-4" />
+                  {t('exitWithoutSubmitting')}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Final Submission Modal */}
       <AnimatePresence>

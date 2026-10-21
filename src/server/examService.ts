@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { GoogleGenAI, Type } from "@google/genai";
-import { parseExamHeuristically } from "../lib/heuristicExamParser";
+import { parseExamHeuristicallyDetailed } from "../lib/heuristicExamParser";
 import { normalizeExamData } from "../lib/examNormalizer";
 
 // ==========================================
@@ -13,18 +13,30 @@ const rateLimitMap = new Map<string, RateLimitRecord>();
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
 const MAX_REQUESTS_PER_WINDOW = 20;
 
+const MAX_TRACKED_IPS = 5000;
+
 export function checkRateLimit(ip: string): boolean {
   const now = Date.now();
   const record = rateLimitMap.get(ip) || { timestamps: [] };
   // Filter out timestamps outside window
   record.timestamps = record.timestamps.filter(ts => now - ts < RATE_LIMIT_WINDOW_MS);
-  
+
   if (record.timestamps.length >= MAX_REQUESTS_PER_WINDOW) {
     return false; // Rate limit exceeded
   }
 
   record.timestamps.push(now);
   rateLimitMap.set(ip, record);
+
+  // Opportunistic eviction: drop entries with no activity left in the window
+  // so a long-running container cannot leak memory through the map.
+  if (rateLimitMap.size > MAX_TRACKED_IPS) {
+    rateLimitMap.forEach((value, key) => {
+      if (!value.timestamps.some(ts => now - ts < RATE_LIMIT_WINDOW_MS)) {
+        rateLimitMap.delete(key);
+      }
+    });
+  }
   return true;
 }
 
@@ -64,6 +76,24 @@ export interface ExamRequestBody {
   fileName?: string;
 }
 
+/**
+ * Builds a response from the deterministic parser, but only when the parser is
+ * confident that it read real options and a real answer key. Questions without
+ * a detectable key are dropped so nothing is ever graded against a guess.
+ */
+function buildLocalFallback(trimmedText: string, fileName?: string): any | null {
+  if (!trimmedText || trimmedText.trim().length < 40) return null;
+  const parsed = parseExamHeuristicallyDetailed(trimmedText, fileName || "Uploaded Exam Practice", {
+    keepUnknownAnswers: true,
+  });
+  if (!parsed.data || parsed.confidence !== 'high' || parsed.data.questions.length === 0) return null;
+  return {
+    ...parsed.data,
+    source: 'heuristic',
+    warning: "Extracted locally because the AI service was unavailable. Questions without a readable answer key are left ungraded — please double-check the rest."
+  };
+}
+
 export async function processExamGeneration(body: ExamRequestBody, clientIp: string = 'unknown'): Promise<{ status: number; data: any }> {
   // 1. Rate Limiting Check
   if (!checkRateLimit(clientIp)) {
@@ -96,19 +126,25 @@ export async function processExamGeneration(body: ExamRequestBody, clientIp: str
     };
   }
 
-  // Enforce 15MB limit on base64 file payloads to protect container memory
-  if (hasFile && fileBase64.length > 20 * 1024 * 1024) {
+  // Base64 inflates payloads by ~33%, so 20MB of base64 is ~15MB of file.
+  const MAX_BASE64_LENGTH = 20 * 1024 * 1024;
+  if (hasFile && fileBase64.length > MAX_BASE64_LENGTH) {
     return {
       status: 400,
       data: {
-        error: "File upload size exceeds maximum allowed limit (15MB). Please compress or split the document."
+        error: "File upload size exceeds the 15MB limit. Please compress or split the document."
       }
     };
   }
 
-  // 3. Check Cache
-  const cacheKeySource = trimmedText + (hasFile ? `_file_${fileBase64.length}_${fileBase64.slice(0, 200)}` : '');
-  const textHash = crypto.createHash('sha256').update(cacheKeySource).digest('hex');
+  // 3. Check Cache — the key covers the whole payload so two different
+  // documents can never collide just because they share a length/prefix.
+  const textHash = crypto
+    .createHash('sha256')
+    .update(trimmedText)
+    .update('\u0000')
+    .update(hasFile ? fileBase64 : '')
+    .digest('hex');
   const cached = getCachedExam(textHash);
   if (cached) {
     return { status: 200, data: cached };
@@ -117,17 +153,14 @@ export async function processExamGeneration(body: ExamRequestBody, clientIp: str
   // 4. API Key Verification
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey.trim() === "") {
-    // Fall back to local heuristic extractor if no Gemini API key configured
-    if (trimmedText.length > 0) {
-      const heuristicResult = parseExamHeuristically(trimmedText, fileName || "Extracted Exam");
-      if (heuristicResult && heuristicResult.questions.length > 0) {
-        setCachedExam(textHash, heuristicResult);
-        return { status: 200, data: heuristicResult };
-      }
-    }
+    // Never fabricate a replacement exam here: an unconfigured server is a
+    // deployment problem that the operator must see, not a silent fake quiz.
     return {
-      status: 500,
-      data: { error: "Gemini API key is not configured. Please set GEMINI_API_KEY in your environment variables." }
+      status: 503,
+      data: {
+        error: "AI exam generation is not configured on this server. Ask the administrator to set GEMINI_API_KEY.",
+        code: "AI_NOT_CONFIGURED"
+      }
     };
   }
 
@@ -140,10 +173,12 @@ export async function processExamGeneration(body: ExamRequestBody, clientIp: str
     }
   });
 
+  // Ordered from cheapest/fastest to strongest. `gemini-3.1-flash-lite` has
+  // the smallest output budget, so it is kept last.
   const CANDIDATE_MODELS = [
     "gemini-3.6-flash",
+    "gemini-3.5-flash",
     "gemini-3.1-pro-preview",
-    
     "gemini-3.1-flash-lite"
   ];
 
@@ -186,10 +221,10 @@ MANDATORY RULES:
 5. ACCURATE 4-OPTION STRUCTURE:
    - Every question must have 4 distinct choices in the 'options' array.
    - Set 'correctAnswerIndex' to the 0-based index of the correct option.
-7. OUTPUT LENGTH AWARENESS:
+6. OUTPUT LENGTH AWARENESS:
    - To avoid JSON truncation, keep explanations concise.
 
-6. UNSTRUCTURED STUDY NOTES / CHAPTERS:
+7. UNSTRUCTURED STUDY NOTES / CHAPTERS:
    - If the material consists of study notes or textbook chapters instead of explicit exam questions, generate a comprehensive quiz covering ALL major topics, theorems, and concepts across the entire document (scaling up with document length, e.g., 20 to 50 questions for large documents).
 
 ${trimmedText ? `Extracted Text Content:\n${trimmedText}` : ''}
@@ -206,7 +241,9 @@ You MUST preserve all section headings, instructions, and reading comprehension 
 Format all mathematical expressions in LaTeX ($...$).
 Return a strictly valid JSON object matching the schema with a "title" and a "questions" array containing ALL extracted questions.`,
     responseMimeType: "application/json",
-    maxOutputTokens: 16384,
+    // A 100-question paper with explanations needs far more than 16k tokens;
+    // the old limit silently truncated long exams mid-JSON.
+    maxOutputTokens: 32768,
     responseSchema: {
       type: Type.OBJECT,
       properties: {
@@ -280,15 +317,50 @@ Return a strictly valid JSON object matching the schema with a "title" and a "qu
   }
 
   if (!responseText) {
-    const heuristicResult = parseExamHeuristically(trimmedText, fileName || "Uploaded Exam Practice");
-    if (heuristicResult && heuristicResult.questions.length > 0) {
-      setCachedExam(textHash, heuristicResult);
-      return { status: 200, data: heuristicResult };
+    const rawError = String(lastError?.message || '');
+    // A rejected key is an operator problem, not a "try again later" spike:
+    // say so instead of making the student retry forever.
+    if (/API_KEY_INVALID|API key not valid|invalid authentication credentials|UNAUTHENTICATED/i.test(rawError)) {
+      return {
+        status: 502,
+        data: {
+          error: "The server's Gemini API key was rejected. Check GEMINI_API_KEY and that the Generative Language API is enabled for that project.",
+          code: "AI_KEY_REJECTED",
+          details: rawError.split('\n')[0]
+        }
+      };
+    }
+    if (/PERMISSION_DENIED|403/i.test(rawError)) {
+      return {
+        status: 502,
+        data: {
+          error: "The configured Gemini key cannot use any of the available models (permission denied or no free-tier quota). Import a JSON/Markdown exam instead, or use a key from a project with access.",
+          code: "AI_ACCESS_DENIED",
+          details: rawError.split('\n')[0]
+        }
+      };
+    }
+
+    if (/fetch failed|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|network|socket hang up/i.test(rawError)) {
+      return {
+        status: 503,
+        data: {
+          error: "The server could not reach Google's AI service (network blocked or DNS unavailable). Import a JSON/Markdown exam instead, or check the deployment's outbound network.",
+          code: "AI_UNREACHABLE",
+          details: rawError.split('\n')[0]
+        }
+      };
+    }
+
+    const local = buildLocalFallback(trimmedText, fileName);
+    if (local) {
+      setCachedExam(textHash, local);
+      return { status: 200, data: local };
     }
     return {
       status: 503,
       data: {
-        error: "AI exam extraction is temporarily busy. Please take any of the available official past exams in the library while this feature resets.",
+        error: "AI exam extraction is temporarily busy. Please try again in a few minutes.",
         isBusy: true,
         details: lastError?.message || "Candidate models are currently busy."
       }
@@ -342,17 +414,18 @@ Return a strictly valid JSON object matching the schema with a "title" and a "qu
     }
   }
 
-  // Graceful fallback to heuristic parser if JSON parsing failed
-  const heuristicResult = parseExamHeuristically(trimmedText, fileName || "Uploaded Exam Practice");
-  if (heuristicResult && heuristicResult.questions.length > 0) {
-    setCachedExam(textHash, heuristicResult);
-    return { status: 200, data: heuristicResult };
+  // Last resort: the deterministic parser. It only returns results when it
+  // actually read option sets and an answer key; otherwise we fail honestly.
+  const local = buildLocalFallback(trimmedText, fileName);
+  if (local) {
+    setCachedExam(textHash, local);
+    return { status: 200, data: local };
   }
 
   return {
-    status: 500,
+    status: 422,
     data: {
-      error: "Unable to parse valid exam questions from this document. Please ensure the document is clear and not password-protected."
+      error: "Unable to parse valid exam questions from this document. Please make sure the file contains readable multiple-choice questions with an answer key and is not password-protected."
     }
   };
 }

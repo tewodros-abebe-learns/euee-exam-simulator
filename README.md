@@ -4,7 +4,7 @@
 [![Open Source](https://img.shields.io/badge/Open%20Source-%E2%9D%A4-brightgreen.svg)]()
 [![Free Tier Ready](https://img.shields.io/badge/Status-Production%20Ready-blue.svg)]()
 
-> A modern, free, and open-source national exam preparation and intelligent learning platform. Seamlessly transforms static past papers, textbook chapters, and study materials into interactive, timed, and graded practice simulations.
+> A modern, free, and open-source exam preparation platform. Turns your own documents, textbook chapters and study materials into interactive, timed and graded practice simulations.
 
 ---
 
@@ -16,11 +16,11 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
 
 ## ✨ Key Features & Capabilities
 
-- 📚 **Comprehensive National Exam Bank**: Includes 17 full official national examinations (2017, 2016, and 2015 E.C.) across Mathematics, English, Physics, Chemistry, Biology, and Scholastic Aptitude Test (SAT) with over 1,200 verified questions.
+- 📚 **Your Own Exam Bank**: Bring your own PDFs, notes, question banks or past papers — the app turns them into a structured, searchable library organised by subject and grade.
 - ⚡ **AI-Powered Exam Generation**: Upload exam PDFs, document scans, or paste raw syllabus text to automatically generate structured multiple-choice questions with answer keys and explanations via Google Gemini.
 - ⏱️ **Real-Time Exam Simulation**: Authentic exam interface featuring customizable countdown timers, question bookmarks, navigation palettes, and instant score breakdowns.
 - 📊 **Performance Analytics & History**: Detailed session review screens highlighting correct answers, explanations, question-by-question timing, and persistent progress metrics.
-- 🌐 **Multilingual Interface**: Full internationalization supporting **English**, **Amharic (አማርኛ)**, **Afaan Oromoo**, and **Tigrinya (ትግርኛ)**.
+- 🌐 **Multilingual Interface**: Full internationalization supporting **English** and **Amharic (አማርኛ)**.
 - 📴 **Offline-First Resilience**: Full IndexedDB offline storage for taking exams, saving sessions, and studying even with intermittent or no internet connection.
 - 📐 **LaTeX & Scientific Formula Rendering**: Integrated KaTeX engine for sharp mathematical formulas, chemical equations, and scientific notations.
 - 🔒 **Enterprise-Grade Security**: Secured with Firestore security rules, Helmet HTTP headers, IP rate-limiting, and server-side secret management.
@@ -30,12 +30,12 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
 ## 🚀 How to Use the App
 
 1. **Getting Started**:
-   - On initial launch, choose your preferred language (**English**, **Amharic**, **Afaan Oromoo**, or **Tigrinya**) and theme (Dark/Light).
+   - On initial launch, choose your preferred language (**English** or **Amharic**) and theme (Dark/Light).
    - Sign in using your email and password, or click **"Continue as Guest"** for instant anonymous access.
 
 2. **Selecting or Creating an Exam**:
-   - Browse the built-in catalog of official 2017, 2016, and 2015 E.C. national exams by subject and grade.
-   - Or upload your own PDF / text notes on the home screen to let the AI create a custom practice exam.
+   - Upload a PDF or paste text to create your first practice exam, then organise it by subject and grade.
+   - Or upload your own PDF / image / Markdown / JSON file to build a custom exam. Structured files are read on-device; the AI extractor is optional.
 
 3. **Taking the Exam**:
    - Select your answers, flag questions for review, and monitor your remaining time.
@@ -53,7 +53,7 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
   - **Framework**: React 19 + TypeScript + Vite
   - **Styling**: Tailwind CSS with responsive layout and dark/light mode themes
   - **Animations**: Framer Motion (`motion/react`)
-  - **Math & Science Rendering**: KaTeX, `react-katex`, `remark-math`, `rehype-katex`
+  - **Math & Science Rendering**: KaTeX, `remark-math`, `rehype-katex`
   - **Icons**: Lucide React
   - **Client Persistence**: IndexedDB & LocalStorage via custom offline synchronization engine
 
@@ -69,12 +69,108 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
 
 ---
 
+## 📥 Getting Exams Into the App
+
+There are three ways in, in order of cost and reliability. Only the last one
+needs an API key.
+
+### 1. JSON import — exact, offline, free
+
+The canonical format is versioned and documented in
+`src/lib/examSchema.ts`. The upload dialog can download a template; a minimal
+file looks like this:
+
+```json
+{
+  "schemaVersion": 1,
+  "title": "Physics — Unit 3",
+  "subject": "Physics",
+  "grade": "Grade 12",
+  "timeLimit": 3600,
+  "questions": [
+    {
+      "id": "q1",
+      "question": "What is the SI unit of force?",
+      "options": ["Joule", "Newton", "Watt", "Pascal"],
+      "correctAnswerIndex": 1,
+      "explanation": "1 N = 1 kg·m/s²."
+    }
+  ]
+}
+```
+
+The importer is deliberately lenient about *shape* and strict about *facts*:
+
+- `options` may be an array of strings, an array of `{ text }` objects (with
+  `isCorrect: true` supported), or an `{ "A": "…", "B": "…" }` map.
+- The answer may be `correctAnswerIndex` (0-based), `correctAnswer` as a letter,
+  a 1-based number, or the full option text. A top-level
+  `answerKey: { "1": "B" }` map also works.
+- **A missing answer key is never guessed.** Such questions are imported as
+  *ungraded*: you can still practise them, but they are not scored, and the
+  results screen says so.
+- A preview shows exactly what will be added — counts, rejected questions and
+  every warning (duplicate options, repeated stems, out-of-range answers) —
+  before anything is saved.
+
+Every exam can be exported back to the same JSON (or Markdown) from its card
+menu, so a library is portable and never locked to one browser.
+
+### 2. Markdown import — offline, free
+
+Ask any AI (or write it by hand) for:
+
+```
+1. What is the powerhouse of the cell?
+A) Nucleus
+B) Mitochondria
+C) Ribosome
+D) Chloroplast
+
+## Answer Key
+1. B
+```
+
+`## Answer Key` (also "Answers:", "Answer Key: 1. B 2. C", "1-B") is optional;
+without it the exam opens in practice mode. Optional header lines
+`Subject:`, `Grade:` and `Time limit: 60 minutes` are read too.
+
+### 3. AI extraction — needs `GEMINI_API_KEY`
+
+For PDFs, photos of papers, or messy text with no answer key. The server sends
+the document to Gemini and validates the returned JSON. Without a key the
+endpoint answers `503 AI_NOT_CONFIGURED`, and the app never falls back to
+made-up questions.
+
+---
+
+## 🛠️ Running the Project Locally
+
+```bash
+npm install          # Node.js 20+ required
+npm run dev          # Express + Vite dev server on http://localhost:3000
+npm run typecheck    # tsc --noEmit
+npm test             # unit tests for scoring, timers, parsing and subjects
+npm run build        # production client (dist/) + server bundle (dist/server.cjs)
+npm start            # run the production bundle
+```
+
+### Environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | Server port (default `3000`). |
+| `GEMINI_API_KEY` | Enables AI exam extraction (optional — JSON/Markdown import works without it). Never prefix with `VITE_`. |
+| `CORS_ORIGIN` | Comma-separated list of allowed browser origins for `/api/*`. When unset, no cross-origin browser requests are allowed. |
+| `VITE_FIREBASE_*` | Firebase project settings (falls back to `firebase-applet-config.json`). |
+
+Deployment: `vercel.json` builds the SPA with `npm run build:client` and serves `api/*` as serverless functions. The API keys stay server-side only.
+
+---
+
 ## 📜 License & Open Source
 
 This project is **100% Free and Open Source** under the **MIT License**. You are free to use, modify, distribute, and contribute to this codebase.
 
 ---
 
-## 👨‍💻 Creator & Attribution
-
-Developed with passion by **Mr. Tewodros Abebe** using **Google AI Studio**.

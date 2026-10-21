@@ -1,28 +1,97 @@
-import { ExamData, Question } from "../services/geminiService";
-import { normalizeExamData } from "./examNormalizer";
+import { type ExamData, type Question } from '../services/geminiService';
+import { normalizeExamData } from './examNormalizer';
 
-export function parseExamHeuristically(rawText: string, defaultTitle: string = "Extracted Exam"): ExamData | null {
-  if (!rawText || !rawText.trim()) return null;
+export type HeuristicConfidence = 'high' | 'low';
 
-  const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  if (lines.length === 0) return null;
+export interface HeuristicParseResult {
+  data: ExamData | null;
+  confidence: HeuristicConfidence;
+  reason?: string;
+  stats: {
+    candidateQuestions: number;
+    acceptedQuestions: number;
+    rejectedQuestions: number;
+    withAnswerKey: number;
+  };
+}
+
+/**
+ * Deterministic, offline parser used only as a *last resort* when the AI
+ * models are unavailable.
+ *
+ * Safety rules (these used to be violated, which produced fake exams that were
+ * presented to students as real practice material):
+ *  - Options are never invented. A question without at least two parsed
+ *    options is rejected.
+ *  - The answer key is never guessed. Questions whose answer could not be
+ *    detected are still returned for review, but the overall result is marked
+ *    as low confidence so callers can refuse to treat it as a graded exam.
+ */
+export interface HeuristicParseOptions {
+  /**
+   * Defaults to true: a question whose answer key was not readable keeps
+   * `correctAnswerIndex = -1` instead of defaulting to option A, so grading
+   * can never be done against a guess. Set to false only for legacy callers
+   * that require every question to carry an index.
+   */
+  keepUnknownAnswers?: boolean;
+}
+
+export function parseExamHeuristicallyDetailed(
+  rawText: string,
+  defaultTitle: string = 'Extracted Exam',
+  parseOptions: HeuristicParseOptions = {}
+): HeuristicParseResult {
+  const empty: HeuristicParseResult = {
+    data: null,
+    confidence: 'low',
+    reason: 'No readable text was found in the document.',
+    stats: { candidateQuestions: 0, acceptedQuestions: 0, rejectedQuestions: 0, withAnswerKey: 0 },
+  };
+
+  if (!rawText || !rawText.trim()) return empty;
+
+  const lines = rawText
+    .split(/\r?\n/)
+    // Markdown decoration is not part of the question: a heading such as
+    // "## Q1" or a bold line such as "**A) ...**" must parse like plain text.
+    .map((line) =>
+      line
+        .trim()
+        .replace(/^#{1,6}\s+/, '')
+        .replace(/^>+\s*/, '')
+        .replace(/^\*\*(.+?)\*\*/, '$1')
+        .replace(/^\*\*(.*)\*\*$/, '$1')
+        .trim()
+    )
+    .filter(Boolean);
+  if (lines.length === 0) return empty;
 
   const questions: Question[] = [];
-  
-  let currentSection = "";
-  let currentInstruction = "";
-  let currentPassage = "";
-  let currentContext = "";
-  let currentQuestionText = "";
+
+  let currentSection = '';
+  let currentInstruction = '';
+  let currentPassage = '';
+  let currentContext = '';
+  let currentQuestionText = '';
   let currentOptions: string[] = [];
-  let currentAnswerIndex = 0;
-  let currentExplanation = "";
+  let currentAnswerIndex: number | null = null;
+  let currentExplanation = '';
   let currentId = 1;
+  let currentQuestionNumber = 0;
+  // Set when a bare "Q3"/"3." heading was seen: the next line is its stem, even
+  // if the stem is not phrased as a question.
+  let expectingStem = false;
+
+  let candidateQuestions = 0;
+  let rejectedQuestions = 0;
+  let withAnswerKey = 0;
 
   // Regex patterns
   const questionStartRegex = /^(?:Question\s*|Q\s*)?(\d+)[\.\)\:\-]\s*(.*)/i;
   const standaloneNumberRegex = /^(\d+)[\.\)]?$/;
-  const optionRegex = /^(?:[•\-\*]\s*)?[(\[]?([A-Ea-e1-4])[)\]\.\:\-]\s*(.*)/;
+  const bareQuestionHeadingRegex = /^(?:Question|Q)\s*(\d+)$/i;
+  const optionRegex = /^(?:[•\-\*]\s*)?[(\[]?([A-Ea-e1-4])[)\].\:\-]\s*(.*)/;
   const answerRegex = /^(?:Correct\s*)?(?:Answer|Ans|Key|Option)[\s\:\-]+([A-Ea-e1-4]|\d+)/i;
   const explanationRegex = /^(?:Explanation|Reason|Solution|Note)[\s\:\-]+(.*)/i;
   const sectionHeaderRegex = /^(?:SECTION\s+[A-Z0-9]+|PART\s+[A-Z0-9]+|CHAPTER\s+[A-Z0-9]+)[\s\:\-]*(.*)/i;
@@ -30,184 +99,198 @@ export function parseExamHeuristically(rawText: string, defaultTitle: string = "
   const passageHeaderRegex = /^(?:Reading\s+Passage|Passage\s+[A-Z0-9]+|Passage)[\s\:\-]*(.*)/i;
 
   function commitCurrentQuestion() {
-    const qText = currentQuestionText.trim();
-    if (qText) {
-      let opts = [...currentOptions];
-      if (opts.length < 2) {
-        // Fallback default options if question was found without explicit options
-        opts = [
-          "Option A",
-          "Option B",
-          "Option C",
-          "Option D"
-        ];
+    const questionText = currentQuestionText.trim();
+    if (questionText) {
+      candidateQuestions += 1;
+      const options = currentOptions.map((option) => option.trim()).filter((option) => option.length > 0);
+      const uniqueOptions = Array.from(new Set(options));
+
+      if (uniqueOptions.length >= 2) {
+        if (currentAnswerIndex !== null) withAnswerKey += 1;
+        questions.push({
+          id: `q-${currentId++}`,
+          section: currentSection.trim() || undefined,
+          instruction: currentInstruction.trim() || undefined,
+          passage: currentPassage.trim() || undefined,
+          context: currentContext.trim() || undefined,
+          question: questionText,
+          options: uniqueOptions,
+          correctAnswerIndex:
+            currentAnswerIndex !== null && currentAnswerIndex < uniqueOptions.length
+              ? currentAnswerIndex
+              : parseOptions.keepUnknownAnswers === false
+                ? 0
+                : -1,
+          explanation: currentExplanation.trim() || 'Extracted from the source document.',
+        });
+        currentContext = '';
+      } else {
+        // No reliable option set: do not invent one.
+        rejectedQuestions += 1;
       }
-
-      questions.push({
-        id: `q-${currentId++}`,
-        section: currentSection.trim() || undefined,
-        instruction: currentInstruction.trim() || undefined,
-        passage: currentPassage.trim() || undefined,
-        context: currentContext.trim() || undefined,
-        question: qText,
-        options: opts.map(opt => opt.trim()),
-        correctAnswerIndex: currentAnswerIndex >= 0 && currentAnswerIndex < opts.length ? currentAnswerIndex : 0,
-        explanation: currentExplanation.trim() || "Extracted from source document."
-      });
-
-      // Clear single question context
-      currentContext = "";
     }
-    currentQuestionText = "";
+    currentQuestionText = '';
     currentOptions = [];
-    currentAnswerIndex = 0;
-    currentExplanation = "";
+    currentAnswerIndex = null;
+    currentExplanation = '';
+    expectingStem = false;
   }
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Check for Section Header (e.g. SECTION ONE: VERBAL REASONING)
     const secMatch = line.match(sectionHeaderRegex);
     if (secMatch && !currentQuestionText) {
       commitCurrentQuestion();
+      currentQuestionNumber = 0;
       currentSection = line;
       if (!/reading|passage|comprehension/i.test(line)) {
-        currentPassage = "";
+        currentPassage = '';
       }
       continue;
     }
 
-    // Check for Directions / Instructions
     const dirMatch = line.match(directionRegex);
     if (dirMatch && !currentQuestionText) {
       commitCurrentQuestion();
+      currentQuestionNumber = 0;
       currentInstruction = line;
       if (!/passage|read the following|comprehension/i.test(line)) {
-        currentPassage = "";
+        currentPassage = '';
       }
       continue;
     }
 
-    // Check for Passage Header
     const passMatch = line.match(passageHeaderRegex);
     if (passMatch && !currentQuestionText) {
-      currentPassage = (currentPassage ? currentPassage + "\n\n" : "") + line;
+      currentPassage = (currentPassage ? `${currentPassage}\n\n` : '') + line;
       continue;
     }
 
-    // Check for standalone number line (e.g. "1." or "1")
+    const bareHeadingMatch = line.match(bareQuestionHeadingRegex);
+    if (bareHeadingMatch) {
+      commitCurrentQuestion();
+      currentQuestionNumber = parseInt(bareHeadingMatch[1], 10);
+      expectingStem = true;
+      continue;
+    }
+
     const standNumMatch = line.match(standaloneNumberRegex);
     if (standNumMatch) {
       commitCurrentQuestion();
-      currentQuestionText = `Question ${standNumMatch[1]}`;
+      currentQuestionNumber = parseInt(standNumMatch[1], 10);
+      expectingStem = true;
       continue;
     }
 
-    // Check for new Question start (e.g. 1. or Q1 or Question 1:)
     const qMatch = line.match(questionStartRegex);
-    if (qMatch && !line.match(optionRegex) && !line.match(answerRegex)) {
-      commitCurrentQuestion();
-      currentQuestionText = qMatch[2] ? qMatch[2].trim() : `Question ${qMatch[1]}`;
-      continue;
+    if (qMatch && !line.match(answerRegex)) {
+      const number = parseInt(qMatch[1], 10);
+      const rest = (qMatch[2] || '').trim();
+      const startsWithNumber = /^\d/.test(line.trim());
+      const looksLikeOption = Boolean(line.match(optionRegex));
+      const startsFresh = currentQuestionText.trim().length === 0;
+      const nextInSequence = number === currentQuestionNumber + 1;
+      const readsLikeQuestionText = rest.endsWith('?') || rest.length > 20;
+
+      // "2." is ambiguous: it can be question 2 or option 2. Prefer the
+      // question reading only when we already collected options and the number
+      // continues the sequence (and the text reads like a question).
+      const isQuestionStart =
+        !looksLikeOption ||
+        (startsWithNumber && startsFresh) ||
+        (startsWithNumber && nextInSequence && currentOptions.length >= 2 && readsLikeQuestionText) ||
+        (startsWithNumber && number > currentOptions.length + 1 && readsLikeQuestionText);
+
+      if (isQuestionStart) {
+        commitCurrentQuestion();
+        currentQuestionNumber = number;
+        currentQuestionText = rest || `Question ${number}`;
+        continue;
+      }
     }
 
-    // Check if line ends with '?' and we don't have an active question
     if (line.endsWith('?') && !currentQuestionText) {
       commitCurrentQuestion();
       currentQuestionText = line;
       continue;
     }
 
-    // Check for Option (A), B), • A:, etc.)
     const optMatch = line.match(optionRegex);
     if (optMatch && currentQuestionText) {
-      const rawKey = optMatch[1].toUpperCase();
-      const text = optMatch[2] ? optMatch[2].trim() : "";
-      if (['A', 'B', 'C', 'D', 'E'].includes(rawKey)) {
-        currentOptions.push(text || line);
-      } else if (!isNaN(parseInt(rawKey, 10))) {
-        currentOptions.push(text || line);
-      } else {
-        currentOptions.push(text || line);
+      const text = optMatch[2] ? optMatch[2].trim() : '';
+      // "1. ..." that starts a new question must not be swallowed as an option.
+      const isNumericOption = /^[1-4]$/.test(optMatch[1]) && currentOptions.length > 0;
+      if (text.length > 0 && (isNumericOption || /[A-Ea-e]/.test(optMatch[1]))) {
+        currentOptions.push(text);
+        continue;
       }
-      continue;
     }
 
-    // Check for Answer key
     const ansMatch = line.match(answerRegex);
     if (ansMatch) {
-      const val = ansMatch[1].toUpperCase();
-      if (['A', 'B', 'C', 'D', 'E'].includes(val)) {
-        currentAnswerIndex = val.charCodeAt(0) - 65;
-      } else if (!isNaN(parseInt(val, 10))) {
-        currentAnswerIndex = Math.max(0, parseInt(val, 10) - 1);
+      const value = ansMatch[1].toUpperCase();
+      if (['A', 'B', 'C', 'D', 'E'].includes(value)) {
+        currentAnswerIndex = value.charCodeAt(0) - 65;
+      } else if (!Number.isNaN(parseInt(value, 10))) {
+        currentAnswerIndex = Math.max(0, parseInt(value, 10) - 1);
       }
       continue;
     }
 
-    // Check for Explanation
     const expMatch = line.match(explanationRegex);
     if (expMatch) {
-      currentExplanation = expMatch[1] ? expMatch[1].trim() : "";
+      currentExplanation = expMatch[1] ? expMatch[1].trim() : '';
       continue;
     }
 
-    // Otherwise append text
-    if (currentOptions.length > 0) {
-      if (currentExplanation) {
-        currentExplanation += " " + line;
-      } else {
-        currentOptions[currentOptions.length - 1] += " " + line;
-      }
+    if (expectingStem && !currentQuestionText) {
+      currentQuestionText = line;
+      expectingStem = false;
+    } else if (currentOptions.length > 0) {
+      currentOptions[currentOptions.length - 1] += ` ${line}`;
     } else if (currentQuestionText) {
-      currentQuestionText += " " + line;
+      currentQuestionText += ` ${line}`;
+    } else if (currentPassage) {
+      currentPassage += `\n${line}`;
+    } else if (currentInstruction) {
+      currentInstruction += ` ${line}`;
     } else {
-      // If we are before question, could be passage or context
-      if (currentPassage) {
-        currentPassage += "\n" + line;
-      } else if (currentInstruction) {
-        currentInstruction += " " + line;
-      } else {
-        currentContext = (currentContext ? currentContext + "\n" : "") + line;
-      }
+      currentContext = (currentContext ? `${currentContext}\n` : '') + line;
     }
   }
 
-  // Commit final question
   commitCurrentQuestion();
 
-  // If still no questions found, but we have text lines, create questions from sentences/paragraphs
-  if (questions.length === 0 && lines.length > 0) {
-    const fullContent = lines.join(" ");
-    const sentences = fullContent.split(/(?<=[.?!])\s+/).filter(s => s.trim().length > 15);
-    
-    sentences.slice(0, 10).forEach((sentence, idx) => {
-      questions.push({
-        id: `q-fallback-${idx + 1}`,
-        section: "General Comprehension",
-        instruction: "Read the excerpt below and determine the correct assertion.",
-        context: "Extracted from study notes / text material",
-        question: `Based on the material: "${sentence.slice(0, 120)}${sentence.length > 120 ? '...' : ''}", which statement is correct?`,
-        options: [
-          sentence.slice(0, 100),
-          "This statement is contradicted by the text.",
-          "The text provides no information regarding this topic.",
-          "None of the above statements are supported."
-        ],
-        correctAnswerIndex: 0,
-        explanation: "The selected sentence directly reflects the conceptual assertion in the text."
-      });
-    });
-  }
-
   if (questions.length === 0) {
-    return null;
+    return {
+      data: null,
+      confidence: 'low',
+      reason:
+        rejectedQuestions > 0
+          ? 'Questions were found but no answer options could be read from the document.'
+          : 'No multiple-choice questions could be detected in this document.',
+      stats: { candidateQuestions, acceptedQuestions: 0, rejectedQuestions, withAnswerKey },
+    };
   }
 
-  return normalizeExamData({
-    title: defaultTitle,
-    questions
-  });
+  const answerKeyRatio = withAnswerKey / questions.length;
+  const confidence: HeuristicConfidence = answerKeyRatio >= 0.6 ? 'high' : 'low';
+
+  return {
+    data: normalizeExamData({
+      title: defaultTitle,
+      questions,
+    }),
+    confidence,
+    reason:
+      confidence === 'low'
+        ? 'Only some questions had a readable answer key, so this exam cannot be graded reliably.'
+        : undefined,
+    stats: { candidateQuestions, acceptedQuestions: questions.length, rejectedQuestions, withAnswerKey },
+  };
 }
 
+export function parseExamHeuristically(rawText: string, defaultTitle: string = 'Extracted Exam'): ExamData | null {
+  return parseExamHeuristicallyDetailed(rawText, defaultTitle).data;
+}

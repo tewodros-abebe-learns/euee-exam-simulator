@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { PlusCircle, Loader2, Info, BookOpen, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Loader2, Info, BookOpen, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ExamInterface from './components/ExamInterface';
 import SummaryPage from './components/SummaryPage';
@@ -15,18 +15,16 @@ import OfflineBanner from './components/OfflineBanner';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { OfflineProvider, useOffline } from './contexts/OfflineContext';
-import { generateExamFromDocument, generateExamFromText, type Question } from './services/geminiService';
-import { readFileAsBase64, extractTextFromFile } from './lib/fileParser';
+import { generateExamFromDocument, type Question } from './services/geminiService';
+import { readFileAsBase64, extractTextFromFile, assertSupportedUpload, getFileExtension, isLocalImportFile } from './lib/fileParser';
 
 import { db, auth } from './firebase';
-import { collection, addDoc, serverTimestamp, updateDoc, doc, getDocs, query, where, setDoc } from 'firebase/firestore';
-import { handleFirestoreError, OperationType } from './lib/firestoreErrorHandler';
+import { collection, addDoc, serverTimestamp, doc, getDocs, query, where, setDoc } from 'firebase/firestore';
 import { offlineStorage } from './lib/offlineStorage';
-import * as pdfjs from 'pdfjs-dist';
-
-// Set up PDF.js worker using unpkg for version 4.4.168
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs`;
-
+import { gradeExam } from './lib/scoring';
+import { parseExamText } from './lib/examImport';
+import { suggestTitleFromFileName, type ImportedExam } from './lib/examSchema';
+import { getExamProgressKey } from './lib/examProgress';
 type View = 'DASHBOARD' | 'UPLOAD' | 'TIMER_SELECTION' | 'EXAM' | 'SUMMARY' | 'SUBJECT_DETAIL';
 type Tab = 'HOME' | 'MY_EXAM';
 
@@ -42,29 +40,30 @@ function AppContent() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [saveProgress, setSaveProgress] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const savedTheme = localStorage.getItem('euee_theme');
+    if (savedTheme === 'light') return false;
+    if (savedTheme === 'dark') return true;
+    return !window.matchMedia?.('(prefers-color-scheme: light)').matches;
+  });
   const [timeLimit, setTimeLimit] = useState<number | null>(null);
   const [startTime, setStartTime] = useState<number | null>(null);
+  const [recommendedTimeLimit, setRecommendedTimeLimit] = useState<number | null>(null);
+  const [originalExam, setOriginalExam] = useState<any | null>(null);
+  const [lastResult, setLastResult] = useState<{ score: number; total: number; percentage: number; duration: number; completedAt: number } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [stats, setStats] = useState({ totalExams: 0, totalQuestions: 0 });
   const { currentUser, logout, isInitializing: authLoading, isFirebaseAuthed } = useAuth();
   const { saveExamLocally, saveSessionLocally, isOnline } = useOffline();
 
   const [isGuestMode, setIsGuestMode] = useState(() => localStorage.getItem('onboarded') === 'true');
-  const { language, setLanguage, t } = useLanguage();
+  const { t } = useLanguage();
   const [showOnboarding, setShowOnboarding] = useState(() => {
     if (typeof window === 'undefined') return false;
     const isCompleted = localStorage.getItem('euee_initial_setup_completed');
     const isOnboarded = localStorage.getItem('onboarded');
     return !isCompleted && !isOnboarded;
   });
-
-  useEffect(() => {
-    if (showOnboarding) {
-      // Mark as acknowledged immediately so refreshing the page will not prompt the modal again
-      localStorage.setItem('euee_initial_setup_completed', 'true');
-    }
-  }, [showOnboarding]);
 
   useEffect(() => {
     if (currentUser) {
@@ -105,49 +104,18 @@ function AppContent() {
   }, [currentUser, authLoading, isGuestMode, view]);
 
   useEffect(() => {
-    if (currentUser && activeTab === 'HOME') {
-      const fetchStats = async () => {
-        if (isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid) {
-          const path = 'exams';
-          try {
-            const q = query(collection(db, path), where('createdBy', '==', currentUser.uid));
-            const querySnapshot = await getDocs(q);
-            let totalQ = 0;
-            querySnapshot.forEach((doc) => {
-              const data = doc.data();
-              if (data.questions) {
-                totalQ += data.questions.length;
-              }
-            });
-            setStats({ totalExams: querySnapshot.size, totalQuestions: totalQ });
-            return;
-          } catch {
-            // Keep stats from local storage below
-          }
-        }
-
-        try {
-          const localExams = await offlineStorage.getAllExams();
-          const userExams = localExams.filter(e => e.createdBy === currentUser.uid);
-          let totalQ = 0;
-          userExams.forEach(e => {
-            if (e.questions) totalQ += e.questions.length;
-          });
-          setStats({ totalExams: userExams.length, totalQuestions: totalQ });
-        } catch {
-          // Keep default stats
-        }
-      };
-      fetchStats();
-    }
-  }, [currentUser, isFirebaseAuthed, activeTab]);
-
-  useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.remove('light-mode');
     } else {
       document.documentElement.classList.add('light-mode');
     }
+    try {
+      localStorage.setItem('euee_theme', isDarkMode ? 'dark' : 'light');
+    } catch {
+      // Private mode / storage disabled — theme simply will not persist.
+    }
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeMeta) themeMeta.setAttribute('content', isDarkMode ? '#0A0A0A' : '#F4F6F8');
   }, [isDarkMode]);
 
   // Restore in-progress exam state if page was refreshed during active exam
@@ -199,15 +167,20 @@ function AppContent() {
     }
   }, [view, saveProgress, examQuestions, currentExamId, examTitle, selectedSubject, selectedGrade, timeLimit, startTime, currentSessionId]);
 
-  // Sync guest exams and sessions to cloud upon login
+  // Sync guest exams and sessions to cloud upon login.
+  // Guarded by a ref so the effect cannot re-run (and re-upload) simply because
+  // the offline context re-created its callbacks on the next render.
+  const guestSyncUidRef = useRef<string | null>(null);
   useEffect(() => {
     let isMounted = true;
     const syncGuestData = async () => {
       if (!currentUser || !isOnline || !isFirebaseAuthed || !auth.currentUser || auth.currentUser.uid !== currentUser.uid) return;
+      if (guestSyncUidRef.current === currentUser.uid) return;
+      guestSyncUidRef.current = currentUser.uid;
       
       try {
         const localExams = await offlineStorage.getAllExams();
-        const guestExams = localExams.filter(e => e.createdBy === 'guest' && !e.isSample);
+        const guestExams = localExams.filter(e => e.createdBy === 'guest');
         
         for (const exam of guestExams) {
           if (!isMounted) break;
@@ -276,7 +249,8 @@ function AppContent() {
     
     syncGuestData();
     return () => { isMounted = false; };
-  }, [currentUser, isFirebaseAuthed, isOnline, saveExamLocally, saveSessionLocally]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.uid, isFirebaseAuthed, isOnline]);
 
   const processExamContent = async (options: {
     rawText?: string;
@@ -302,9 +276,12 @@ function AppContent() {
         : (options.fileName ? options.fileName.replace(/\.[^/.]+$/, '') : `${options.subject}${options.grade ? ` - Grade ${options.grade}` : ''}`);
       const computedTitle = rawTitle.trim() || 'Custom Exam';
 
+      if (result.warning) setErrorMessage(result.warning);
       setExamQuestions(result.questions);
       setExamTitle(computedTitle);
       setSelectedGrade(options.grade || 'General');
+      setRecommendedTimeLimit(null);
+      setCurrentSessionId(null);
 
       // Auto-save uploaded & analyzed exam immediately by default
       const newExamId = `exam_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
@@ -315,11 +292,10 @@ function AppContent() {
         questions: result.questions,
         createdBy: currentUser?.uid || 'guest',
         createdAt: Date.now(),
-        isSample: false,
         source: 'custom' as const
       };
-      
-      
+      setOriginalExam({ ...examData, id: newExamId });
+
       if (currentUser && isOnline && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid) {
         try {
           const docRef = await addDoc(collection(db, 'exams'), {
@@ -331,10 +307,12 @@ function AppContent() {
             createdAt: serverTimestamp()
           });
           setCurrentExamId(docRef.id);
+          setOriginalExam((prev: any) => (prev ? { ...prev, id: docRef.id } : prev));
           await saveExamLocally({ id: docRef.id, ...examData });
         } catch(e) {
           console.warn("Could not save exam to Firestore, cached locally:", e);
           setCurrentExamId(newExamId);
+          setOriginalExam((prev: any) => (prev ? { ...prev, id: newExamId } : prev));
           await saveExamLocally({ id: newExamId, ...examData });
         }
       } else {
@@ -351,9 +329,83 @@ function AppContent() {
     }
   };
 
+  /**
+   * Adds an exam that was parsed on this device (JSON / Markdown import).
+   * No AI call, no quota, nothing to hallucinate.
+   */
+  const handleImportExam = async (imported: ImportedExam) => {
+    setErrorMessage(null);
+    const title = imported.title?.trim() || 'Imported Exam';
+    const examData = {
+      title,
+      subject: imported.subject || 'General',
+      grade: imported.grade || 'Grade 12',
+      questions: imported.questions,
+      createdBy: currentUser?.uid || 'guest',
+      createdAt: Date.now(),
+      source: 'custom' as const,
+      ...(imported.timeLimit && imported.timeLimit > 0 ? { timeLimit: imported.timeLimit } : {}),
+    };
+
+    setExamQuestions(imported.questions);
+    setExamTitle(title);
+    setSelectedSubject(examData.subject);
+    setSelectedGrade(examData.grade);
+    setRecommendedTimeLimit(imported.timeLimit && imported.timeLimit > 0 ? imported.timeLimit : null);
+    setCurrentSessionId(null);
+    setUserAnswers({});
+
+    const newExamId = `exam_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    setOriginalExam({ ...examData, id: newExamId });
+
+    if (currentUser && isOnline && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid) {
+      try {
+        const docRef = await addDoc(collection(db, 'exams'), {
+          ...examData,
+          createdAt: serverTimestamp(),
+        });
+        setCurrentExamId(docRef.id);
+        setOriginalExam((prev: any) => (prev ? { ...prev, id: docRef.id } : prev));
+        await saveExamLocally({ id: docRef.id, ...examData });
+      } catch (e) {
+        console.warn('Could not save the imported exam to Firestore, cached locally:', e);
+        setCurrentExamId(newExamId);
+        setOriginalExam((prev: any) => (prev ? { ...prev, id: newExamId } : prev));
+        await saveExamLocally({ id: newExamId, ...examData });
+      }
+    } else {
+      setCurrentExamId(newExamId);
+      await saveExamLocally({ id: newExamId, ...examData });
+    }
+
+    setView('TIMER_SELECTION');
+  };
+
   const handleFileUpload = async (file: File, subject: string, grade?: string) => {
     setSelectedSubject(subject);
     try {
+      assertSupportedUpload(file);
+      if (isLocalImportFile(file)) {
+        // Structured files are read on-device: sending them to the AI would
+        // only risk reformatting a file that is already correct.
+        const raw = await file.text();
+        const report = parseExamText(raw, { subject, grade, title: suggestTitleFromFileName(file.name) });
+        if (report.ok && report.exam) {
+          await handleImportExam(report.exam);
+          return;
+        }
+        // A Markdown file may be prose rather than a question list; let the AI
+        // try. A broken JSON file is a real error, so report it directly.
+        if (getFileExtension(file.name) === '.json') {
+          throw new Error(
+            report.issues.find((issue) => issue.level === 'error')?.message ||
+              'Could not import that JSON file.'
+          );
+        }
+      }
+      if (file.size > 15 * 1024 * 1024) {
+        throw new Error('That file is larger than 15MB. Please compress it or upload a smaller section.');
+      }
       const [base64, extractedText] = await Promise.all([
         readFileAsBase64(file),
         extractTextFromFile(file).catch(() => '')
@@ -379,12 +431,18 @@ function AppContent() {
   };
 
   const handleTimerSelection = async (seconds: number, saveProgressChoice: boolean) => {
-    setTimeLimit(seconds);
+    // seconds === 0 means practice mode without any countdown.
+    setTimeLimit(seconds > 0 ? seconds : null);
     setSaveProgress(saveProgressChoice);
     setStartTime(Date.now());
     setUserAnswers({});
+    setCurrentSessionId(null);
+    // Never inherit a previous attempt's snapshots for this paper.
+    try {
+      localStorage.removeItem(getExamProgressKey(currentExamId, examTitle));
+    } catch {}
     
-    // If not already persisted or user selected an official/existing exam without currentExamId
+    // Persist the exam the user just built if it has no id yet
     if (!currentExamId) {
       try {
         const examData = {
@@ -394,7 +452,6 @@ function AppContent() {
           questions: examQuestions,
           createdBy: currentUser?.uid || 'guest',
           createdAt: Date.now(),
-          isSample: false,
           source: 'custom' as const
         };
         
@@ -407,13 +464,16 @@ function AppContent() {
                createdAt: serverTimestamp()
              });
              setCurrentExamId(docRef.id);
+             setOriginalExam((prev: any) => (prev ? { ...prev, id: docRef.id } : prev));
              await saveExamLocally({ id: docRef.id, ...examData });
            } catch(e) {
              setCurrentExamId(newExamId);
+             setOriginalExam((prev: any) => (prev ? { ...prev, id: newExamId } : prev));
              await saveExamLocally({ id: newExamId, ...examData });
            }
         } else {
            setCurrentExamId(newExamId);
+           setOriginalExam((prev: any) => (prev ? { ...prev, id: newExamId } : prev));
            await saveExamLocally({ id: newExamId, ...examData });
         }
       } catch (e) {
@@ -426,90 +486,106 @@ function AppContent() {
 
   const handleFinishExam = async (answers: Record<string, string> = {}) => {
     setUserAnswers(answers);
-    const endTime = Date.now();
-    const duration = Math.floor((endTime - (startTime || endTime)) / 1000);
-    
-    let score = 0;
-    examQuestions.forEach(q => {
-      if (parseInt(answers[q.id]) === q.correctAnswerIndex) score++;
-    });
+    const graded = gradeExam(examQuestions, answers);
+    const startedAt = startTime || Date.now();
+    const duration = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    // Reuse the id of an attempt that was already saved as IN_PROGRESS, so
+    // finishing it updates that row instead of leaving a duplicate behind.
+    const newSessionId = currentSessionId || `session_${Date.now()}`;
+    const resolvedExamId = currentExamId || 'exam_local';
+    const userId = currentUser?.uid || 'guest';
 
-    const sessionData = {
-      examId: currentExamId,
-      userId: currentUser?.uid || 'guest',
-      score,
-      totalQuestions: examQuestions.length,
+    setLastResult({
+      score: graded.correct,
+      total: graded.graded,
+      percentage: graded.percentage,
       duration,
       completedAt: Date.now(),
-      answers
-    };
-    
-    const newSessionId = `session_${Date.now()}`;
-    await saveSessionLocally({ 
-      id: newSessionId, 
-      examId: currentExamId || 'exam_local',
-      userId: currentUser?.uid || 'guest',
-      status: 'COMPLETED', 
-      score,
-      total: examQuestions.length,
-      percentage: Math.round((score / (examQuestions.length || 1)) * 100),
-      startTime: startTime || Date.now(), 
-      timeLimit: timeLimit || 0, 
-      timeSpent: duration,
-      lastUpdated: Date.now(), 
-      syncedWithCloud: false, 
-      answers 
     });
-    
-    if (currentUser && isOnline && currentExamId && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid) {
+
+    // Answers are stored with the session so results can be reviewed later.
+    try {
+      await saveSessionLocally({
+        id: newSessionId,
+        examId: resolvedExamId,
+        userId,
+        status: 'COMPLETED',
+        score: graded.correct,
+        total: graded.graded,
+        percentage: graded.percentage,
+        startTime: startedAt,
+        timeLimit: timeLimit || 0,
+        timeSpent: duration,
+        lastUpdated: Date.now(),
+        syncedWithCloud: false,
+        answers,
+      });
+    } catch (e) {
+      console.warn('Could not persist the exam session locally:', e);
+    }
+
+    const canWriteCloud =
+      Boolean(currentUser) &&
+      isOnline &&
+      isFirebaseAuthed &&
+      Boolean(auth.currentUser) &&
+      auth.currentUser!.uid === currentUser!.uid;
+
+    if (canWriteCloud) {
       try {
-        const userExamDoc = await addDoc(collection(db, 'user_exams'), {
-          examId: currentExamId,
-          userId: currentUser.uid,
+        // Deterministic id keeps the local and cloud copies of one attempt in sync.
+        await setDoc(doc(db, 'user_exams', newSessionId), {
+          examId: resolvedExamId,
+          userId: userId,
           status: 'COMPLETED',
           answers,
-          score,
-          totalQuestions: examQuestions.length,
-          startTime: startTime || Date.now(),
+          score: graded.correct,
+          total: graded.graded,
+          totalQuestions: graded.total,
+          percentage: graded.percentage,
+          startTime: startedAt,
           timeLimit: timeLimit || 0,
           duration,
-          lastUpdated: serverTimestamp()
+          lastUpdated: serverTimestamp(),
         });
-        setCurrentSessionId(userExamDoc.id);
-
-        // Also mirror to sessions collection
-        try {
-          await addDoc(collection(db, 'sessions'), {
-            examId: currentExamId,
-            userId: currentUser.uid,
-            score,
-            totalQuestions: examQuestions.length,
-            duration,
-            answers,
-            completedAt: serverTimestamp()
-          });
-        } catch {
-          // ignore mirror error
-        }
-      } catch (e) {
-        console.warn("Could not save user exam session to Firestore:", e);
         setCurrentSessionId(newSessionId);
+      } catch (e) {
+        console.warn('Could not save the exam session to Firestore:', e);
       }
-    } else {
-      setCurrentSessionId(newSessionId);
     }
-    
+
+    setCurrentSessionId(newSessionId);
+
     try {
       localStorage.removeItem('euee_active_exam_state');
-      if (currentExamId) {
-        localStorage.removeItem(`exam_progress_${currentExamId}`);
-      }
-      if (examTitle) {
-        localStorage.removeItem(`exam_progress_${examTitle.replace(/\s+/g, '_')}`);
-      }
+      localStorage.removeItem(getExamProgressKey(currentExamId, examTitle));
     } catch {}
-    
+
     setView('SUMMARY');
+  };
+
+  const handleExitExam = async (answers: Record<string, string> = {}) => {
+    // Keep an in-progress session so "Continue" on the dashboard is real.
+    if (saveProgress && currentExamId && examQuestions.length > 0) {
+      const sessionId = currentSessionId || `session_${Date.now()}`;
+      try {
+        await saveSessionLocally({
+          id: sessionId,
+          examId: currentExamId,
+          userId: currentUser?.uid || 'guest',
+          status: 'IN_PROGRESS',
+          answers,
+          startTime: startTime || Date.now(),
+          timeLimit: timeLimit || 0,
+          lastUpdated: Date.now(),
+          syncedWithCloud: false,
+        });
+        setCurrentSessionId(sessionId);
+      } catch (e) {
+        console.warn('Could not save the in-progress session:', e);
+      }
+    }
+    setView('DASHBOARD');
   };
 
   const handleSelectExam = (exam: any) => {
@@ -522,6 +598,12 @@ function AppContent() {
     setSelectedSubject(exam.subject || 'General');
     setSelectedGrade(exam.grade || 'Grade 12');
     setCurrentExamId(exam.id || `exam_${Date.now()}`);
+    setOriginalExam(exam);
+    setRecommendedTimeLimit(typeof exam.timeLimit === 'number' && exam.timeLimit > 0 ? exam.timeLimit : null);
+    // A fresh attempt must never show the previous attempt's answers.
+    setUserAnswers({});
+    setCurrentSessionId(null);
+    setTimeLimit(null);
     setView('TIMER_SELECTION');
   };
 
@@ -532,18 +614,52 @@ function AppContent() {
     setSelectedSubject(exam.subject || 'General');
     setSelectedGrade(exam.grade || 'Grade 12');
     setCurrentExamId(exam.id);
+    setOriginalExam(exam);
+    setRecommendedTimeLimit(typeof exam.timeLimit === 'number' && exam.timeLimit > 0 ? exam.timeLimit : null);
     setTimeLimit(session?.timeLimit || null);
     setUserAnswers(session?.answers || {});
+    // Resuming keeps the original start time so the remaining time is honest.
     setStartTime(session?.startTime || Date.now());
     setCurrentSessionId(session?.id);
+    // A resumed attempt whose clock already ran out must not silently restart.
+    if (session?.timeLimit > 0) {
+      const remaining = session.timeLimit - Math.floor((Date.now() - (session.startTime || Date.now())) / 1000);
+      if (remaining <= 0) {
+        setErrorMessage(
+          'The time limit for that session has already ended, so it has been graded with the answers you saved.'
+        );
+        const graded = gradeExam(exam.questions || [], session.answers || {});
+        setLastResult({
+          score: graded.correct,
+          total: graded.graded,
+          percentage: graded.percentage,
+          duration: session.timeLimit,
+          completedAt: Date.now(),
+        });
+        setUserAnswers(session.answers || {});
+        setView('SUMMARY');
+        return;
+      }
+    }
     setView('EXAM');
   };
 
   const handleViewSummarySession = (exam: any, session: any) => {
     if (!exam) return;
-    setExamQuestions(exam.questions || []);
+    const questions = exam.questions || [];
+    const answers = session?.answers || {};
+    const graded = gradeExam(questions, answers);
+    setExamQuestions(questions);
     setExamTitle(exam.title || 'Exam Summary');
-    setUserAnswers(session?.answers || {});
+    setOriginalExam(exam);
+    setUserAnswers(answers);
+    setLastResult({
+      score: graded.correct,
+      total: graded.graded,
+      percentage: graded.percentage,
+      duration: session?.timeSpent || session?.duration || 0,
+      completedAt: session?.lastUpdated || Date.now(),
+    });
     setView('SUMMARY');
   };
 
@@ -570,6 +686,7 @@ function AppContent() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         isDarkMode={isDarkMode}
+        showNav={Boolean(currentUser) || isGuestMode}
         toggleTheme={() => setIsDarkMode(!isDarkMode)}
         onSignIn={() => {
            setIsGuestMode(false);
@@ -598,13 +715,12 @@ function AppContent() {
           {view === 'DASHBOARD' && activeTab === 'HOME' && (currentUser || isGuestMode) && (
             <Home
               key="home"
-              onStartNew={() => setView('UPLOAD')}
               onContinue={handleContinueSession}
               onRetake={handleSelectExam}
               onViewSummary={handleViewSummarySession}
-              onLoadSample={handleSelectExam}
               onUpload={handleFileUpload}
               onProcessText={handleTextSubmit}
+              onImportExam={handleImportExam}
               isParsing={isParsing}
             />
           )}
@@ -626,11 +742,14 @@ function AppContent() {
           {view === 'DASHBOARD' && activeTab === 'MY_EXAM' && (currentUser || isGuestMode) && (
             <Dashboard 
               key="dashboard" 
-              onStartNew={() => setView('UPLOAD')}
               onContinue={handleContinueSession} 
               onRetake={handleSelectExam} 
               onViewSummary={handleViewSummarySession} 
               onSelectSubject={(subj) => { setSelectedSubject(subj); setView('SUBJECT_DETAIL'); }} 
+              onUpload={handleFileUpload}
+              onProcessText={handleTextSubmit}
+              onImportExam={handleImportExam}
+              isParsing={isParsing}
             />
           )}
 
@@ -639,6 +758,8 @@ function AppContent() {
               key="timer"
               onSelect={handleTimerSelection}
               currentUser={currentUser}
+              recommendedSeconds={recommendedTimeLimit}
+              examTitle={examTitle}
               onSignIn={() => {
                 setIsGuestMode(false);
                 setView('UPLOAD');
@@ -651,8 +772,9 @@ function AppContent() {
               key="exam"
               questions={examQuestions}
               timeLimit={timeLimit || 0}
+              examId={currentExamId}
               onComplete={handleFinishExam}
-              onBack={() => setView('DASHBOARD')}
+              onBack={handleExitExam}
               saveAnswer={(qId, ans) => setUserAnswers(prev => ({...prev, [qId]: ans}))}
               initialAnswers={userAnswers}
               startTime={startTime || Date.now()}
@@ -670,6 +792,35 @@ function AppContent() {
               questions={examQuestions}
               userAnswers={userAnswers}
               title={examTitle}
+              timeSpentSeconds={lastResult?.duration}
+              onReviewMissed={() => {
+                const source = originalExam?.questions || examQuestions;
+                const missed = source.filter(
+                  (q: Question) => !userAnswers[q.id] || userAnswers[q.id] !== q.options[q.correctAnswerIndex]
+                );
+                if (missed.length === 0) return;
+                setExamQuestions(missed);
+                setExamTitle(`${examTitle} — ${t('reviewMissed')}`);
+                setUserAnswers(
+                  Object.fromEntries(
+                    Object.entries(userAnswers).filter(([id]) => missed.some((q: Question) => q.id === id))
+                  )
+                );
+                setCurrentExamId(`${currentExamId || 'exam'}_missed_${Date.now()}`);
+                setTimeLimit(null);
+                setRecommendedTimeLimit(null);
+                setStartTime(Date.now());
+                setSaveProgress(false);
+                setLastResult(null);
+                setView('TIMER_SELECTION');
+              }}
+              onRetake={() => {
+                if (originalExam) {
+                  handleSelectExam(originalExam);
+                } else {
+                  setView('DASHBOARD');
+                }
+              }}
               onReset={() => setView('DASHBOARD')}
             />
           )}
@@ -678,7 +829,7 @@ function AppContent() {
         <AnimatePresence>
           {errorMessage && (
             (() => {
-              const isBusy = /busy|high traffic|capacity|rate limit|quota|temporarily|available official/i.test(errorMessage);
+              const isBusy = /busy|high traffic|capacity|rate limit|quota|temporarily unavailable/i.test(errorMessage);
               return (
                 <motion.div
                   initial={{ opacity: 0, y: 40, scale: 0.95 }}
@@ -696,7 +847,7 @@ function AppContent() {
                     </div>
                     <div className="flex-1">
                       <h3 className="font-bold text-sm">
-                        {isBusy ? t('aiHighTrafficNotice') : 'Notice'}
+                        {isBusy ? t('aiHighTrafficNotice') : t('notice')}
                       </h3>
                       <p className="text-xs opacity-90 mt-1 leading-relaxed">{errorMessage}</p>
                       {isBusy && (
@@ -712,7 +863,7 @@ function AppContent() {
                             className="text-xs bg-[#8AB4F8] text-gray-900 font-bold px-3 py-1.5 rounded-xl hover:bg-[#AECBFA] transition-colors flex items-center gap-1.5 shadow-sm"
                           >
                             <BookOpen className="w-3.5 h-3.5" />
-                            {t('browseOfficialExams')}
+                            {t('backToMyExams')}
                           </button>
                         )}
                         <button
@@ -723,7 +874,7 @@ function AppContent() {
                               : 'bg-white/20 hover:bg-white/30 text-white'
                           }`}
                         >
-                          Dismiss
+                          {t('dismiss')}
                         </button>
                       </div>
                     </div>
@@ -755,12 +906,12 @@ function AppContent() {
 
 export default function App() {
   return (
-    <OfflineProvider>
-      <LanguageProvider>
+    <LanguageProvider>
+      <OfflineProvider>
         <AuthProvider>
           <AppContent />
         </AuthProvider>
-      </LanguageProvider>
-    </OfflineProvider>
+      </OfflineProvider>
+    </LanguageProvider>
   );
 }

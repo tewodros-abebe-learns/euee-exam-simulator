@@ -3,7 +3,6 @@
  * Powered by IndexedDB for zero-latency, full-fidelity offline test taking & caching.
  */
 
-import { allOfficialExams, default2017Exams, default2016Exams } from '../data/sampleExams';
 import { type Question } from '../services/geminiService';
 
 const DB_NAME = 'EUEE_Exam_Offline_DB';
@@ -17,9 +16,10 @@ export interface OfflineExam {
   questions: Question[];
   createdBy?: string;
   createdAt: number;
+  /** @deprecated Kept only so older cached records can be purged. */
   isSample?: boolean;
   isOfflineReady?: boolean;
-  source?: 'sample' | 'custom' | 'cloud';
+  source?: 'custom' | 'cloud';
 }
 
 export interface OfflineSession {
@@ -47,6 +47,7 @@ export interface SyncQueueItem {
 
 class OfflineStorageManager {
   private dbPromise: Promise<IDBDatabase> | null = null;
+  private readyPromise: Promise<void> | null = null;
 
   private getDB(): Promise<IDBDatabase> {
     if (this.dbPromise) return this.dbPromise;
@@ -97,41 +98,45 @@ class OfflineStorageManager {
   }
 
   /**
-   * Initialize offline store and seed built-in national exams if not yet cached
+   * Initializes the offline store.
+   *
+   * Earlier versions of the app shipped the 2015-2017 national papers inside
+   * the bundle and copied them into IndexedDB on first launch. The bundled
+   * papers are gone, so any records a returning device still has are purged
+   * once here; user-created exams and their sessions are untouched.
    */
   async init(): Promise<void> {
-    try {
-      const db = await this.getDB();
-      
-      // Pre-populate national past papers (2017 & 2016 E.C.) so students have complete offline test bank immediately
-      for (const sample of allOfficialExams) {
-        await this.saveExam({
-          id: sample.id,
-          title: sample.title,
-          subject: sample.subject,
-          grade: sample.grade || 'Grade 12',
-          questions: sample.questions,
-          createdAt: Date.now(),
-          isSample: true,
-          isOfflineReady: true,
-          source: 'sample'
-        });
+    if (this.readyPromise) return this.readyPromise;
+    this.readyPromise = (async () => {
+      try {
+        await this.getDB();
+        const existing = await this.getAllExams();
+        const legacySamples = existing.filter((exam) => exam.isSample === true);
+        for (const legacy of legacySamples) {
+          await this.deleteExam(legacy.id);
+        }
+        if (legacySamples.length > 0) {
+          console.info(`Removed ${legacySamples.length} previously bundled past papers from offline storage.`);
+        }
+      } catch (e) {
+        console.warn('Could not initialize offline IndexedDB storage:', e);
+        this.readyPromise = null;
       }
-    } catch (e) {
-      console.warn('Could not initialize offline IndexedDB storage:', e);
+    })();
+    return this.readyPromise;
+  }
+
+  /** Waits for the initialization sweep so first-load reads never race it. */
+  private async whenReady(): Promise<void> {
+    if (this.readyPromise) {
+      try {
+        await this.readyPromise;
+      } catch {
+        // A failed seed must not block reads.
+      }
     }
   }
 
-  private async getExamsCount(): Promise<number> {
-    const db = await this.getDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction('exams', 'readonly');
-      const store = tx.objectStore('exams');
-      const countReq = store.count();
-      countReq.onsuccess = () => resolve(countReq.result);
-      countReq.onerror = () => resolve(0);
-    });
-  }
 
   // ==========================================
   // EXAM OPERATIONS
@@ -152,6 +157,7 @@ class OfflineStorageManager {
   }
 
   async getExamById(id: string): Promise<OfflineExam | null> {
+    await this.whenReady();
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('exams', 'readonly');
@@ -163,6 +169,7 @@ class OfflineStorageManager {
   }
 
   async getAllExams(subject?: string): Promise<OfflineExam[]> {
+    await this.whenReady();
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('exams', 'readonly');
@@ -206,6 +213,7 @@ class OfflineStorageManager {
   }
 
   async getSession(id: string): Promise<OfflineSession | null> {
+    await this.whenReady();
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('sessions', 'readonly');
@@ -217,6 +225,7 @@ class OfflineStorageManager {
   }
 
   async getAllSessions(userId?: string): Promise<OfflineSession[]> {
+    await this.whenReady();
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('sessions', 'readonly');
@@ -231,6 +240,27 @@ class OfflineStorageManager {
         resolve(results);
       };
       req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** Flags a locally stored session as already mirrored to Firestore. */
+  async markSessionSynced(id: string): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('sessions', 'readwrite');
+      const store = tx.objectStore('sessions');
+      const getReq = store.get(id);
+      getReq.onsuccess = () => {
+        const existing = getReq.result as OfflineSession | undefined;
+        if (!existing) {
+          resolve();
+          return;
+        }
+        const putReq = store.put({ ...existing, syncedWithCloud: true });
+        putReq.onsuccess = () => resolve();
+        putReq.onerror = () => reject(putReq.error);
+      };
+      getReq.onerror = () => reject(getReq.error);
     });
   }
 

@@ -3,13 +3,15 @@
  * Provides offline application access, background caching, and asset persistence.
  */
 
-const CACHE_NAME = 'euee-pwa-v1';
+const CACHE_VERSION = '__BUILD_VERSION__';
+const CACHE_NAME = `euee-pwa-${CACHE_VERSION}`;
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
   '/icons/icon.svg',
-  'https://unpkg.com/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs'
+  '/icons/icon-192.png',
+  '/icons/icon-512.png'
 ];
 
 // 1. Service Worker Install
@@ -58,7 +60,8 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          if (response && response.status === 200) {
+          // Only same-origin, successful responses are safe to cache for an SPA shell.
+          if (response && response.status === 200 && url.origin === self.location.origin) {
             const responseClone = response.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
           }

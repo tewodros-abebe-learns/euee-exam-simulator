@@ -7,7 +7,9 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { FileText, Timer, CheckCircle2, Play, Trash2, Clock, Plus, Loader2, Key, AlertCircle, Edit2, Search, ChevronDown, FolderOpen, ChevronRight, Upload } from 'lucide-react';
 import ExamUploadModal from './ExamUploadModal';
+import type { ImportedExam } from '../lib/examSchema';
 import { offlineStorage } from '../lib/offlineStorage';
+import { SUBJECTS, GRADES, matchesSubject, normalizeSubject, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
 
 interface Exam {
   id: string;
@@ -25,32 +27,31 @@ interface UserExam {
   answers: Record<string, string>;
   startTime: number;
   timeLimit: number;
+  score?: number;
+  total?: number;
+  percentage?: number;
   lastUpdated: any;
 }
 
 interface DashboardProps {
-  onStartNew: () => void;
   onContinue: (exam: Exam, session: UserExam) => void;
   onRetake: (exam: Exam) => void;
   onViewSummary: (exam: Exam, session: UserExam) => void;
   onSelectSubject: (subject: string) => void;
   onUpload?: (file: File, subject: string, grade: string) => Promise<void>;
   onProcessText?: (text: string, subject: string, grade: string) => Promise<void>;
+  onImportExam?: (exam: ImportedExam) => Promise<void>;
   isParsing?: boolean;
   key?: string;
 }
 
-const SUBJECTS = ['General', 'Math', 'Biology', 'English', 'Physics', 'Chemistry', 'SAT'];
-const GRADES = ['Grade 9', 'Grade 10', 'Grade 11', 'Grade 12', 'General'];
-
-export default function Dashboard({ onStartNew, onContinue, onRetake, onViewSummary, onSelectSubject, onUpload, onProcessText, isParsing }: DashboardProps) {
+export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelectSubject, onUpload, onProcessText, onImportExam, isParsing }: DashboardProps) {
   const { currentUser, isFirebaseAuthed } = useAuth();
   const { t } = useLanguage();
   const [exams, setExams] = useState<Exam[]>([]);
   const [userExams, setUserExams] = useState<UserExam[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [expandedSubject, setExpandedSubject] = useState<string | null>(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   
   // Modals state
@@ -74,7 +75,7 @@ export default function Dashboard({ onStartNew, onContinue, onRetake, onViewSumm
         
         if (!isMounted) return;
 
-        const customLocalExams = localExams.filter(e => !e.isSample);
+        const customLocalExams = localExams;
 
         setExams(prev => {
           const map = new Map<string, Exam>();
@@ -208,12 +209,22 @@ export default function Dashboard({ onStartNew, onContinue, onRetake, onViewSumm
     const map: Record<string, Exam[]> = {};
     SUBJECTS.forEach(sub => map[sub] = []);
     filteredExams.forEach(exam => {
-      if (SUBJECTS.includes(exam.subject)) {
-        map[exam.subject].push(exam);
-      }
+      const folder = normalizeSubject(exam.subject);
+      if (map[folder]) map[folder].push(exam);
     });
     return map;
   }, [filteredExams]);
+
+  const recentResults = useMemo(() => {
+    return userExams
+      .filter(session => session.status === 'COMPLETED')
+      .slice(0, 6)
+      .map(session => ({
+        session,
+        exam: exams.find(e => e.id === session.examId),
+      }))
+      .filter(item => Boolean(item.exam));
+  }, [userExams, exams]);
 
   const confirmDelete = async () => {
     if (!deleteConfirmId) return;
@@ -340,27 +351,8 @@ export default function Dashboard({ onStartNew, onContinue, onRetake, onViewSumm
     }
   };
 
-  const getSubjectName = (subj: string) => {
-    switch (subj) {
-      case 'Math': return t('subjectMath');
-      case 'Biology': return t('subjectBiology');
-      case 'English': return t('subjectEnglish');
-      case 'Physics': return t('subjectPhysics');
-      case 'Chemistry': return t('subjectChemistry');
-      case 'SAT': return t('subjectSAT');
-      default: return t('subjectGeneral');
-    }
-  };
-
-  const getGradeName = (grd: string) => {
-    switch (grd) {
-      case 'Grade 12': return t('grade12');
-      case 'Grade 11': return t('grade11');
-      case 'Grade 10': return t('grade10');
-      case 'Grade 9': return t('grade9');
-      default: return t('gradeGeneral');
-    }
-  };
+  const getSubjectName = (subj: string) => t(subjectLabelKey(subj));
+  const getGradeName = (grd: string) => t(gradeLabelKey(grd));
 
   if (loading) {
     return (
@@ -404,11 +396,49 @@ export default function Dashboard({ onStartNew, onContinue, onRetake, onViewSumm
         </div>
       </div>
 
+      {/* Recent results */}
+      {recentResults.length > 0 && (
+        <div className="mb-12">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-black text-[var(--text-primary)]">{t('recentActivity')}</h2>
+            <span className="text-xs text-[var(--text-secondary)]">{recentResults.length}</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {recentResults.map(({ session, exam }) => {
+              const total = session.total ?? (exam!.questions?.length || 0);
+              const score = session.score ?? 0;
+              const percentage = session.percentage ?? (total > 0 ? Math.round((score / total) * 100) : 0);
+              const isPracticeOnly = total === 0;
+              return (
+                <div key={session.id} className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl p-4 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-[var(--text-primary)] truncate">{exam!.title}</p>
+                    <p className="text-[11px] font-semibold text-[var(--text-secondary)] mt-1">
+                      {isPracticeOnly ? t('practiceModeLabel') : `${score}/${total} · ${percentage}%`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {!isPracticeOnly && (
+                      <span className={`text-sm font-black ${percentage >= 50 ? 'text-emerald-500' : 'text-red-500'}`}>{percentage}%</span>
+                    )}
+                    <button
+                      onClick={() => onViewSummary(exam!, session)}
+                      className="px-3 py-2 rounded-xl bg-[var(--bg-accent)] border border-[var(--border-color)] text-[11px] font-bold text-[var(--text-primary)] hover:bg-[var(--card-hover)] transition-colors"
+                    >
+                      {t('results')}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Subject Folders Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {SUBJECTS.map((subject) => {
-          const subjectExams = examsBySubject[subject];
-          const isExpanded = expandedSubject === subject;
+          const subjectExams = exams.filter(exam => matchesSubject(exam.subject, subject));
 
           return (
             <div key={subject} className="flex flex-col gap-4">
@@ -480,8 +510,8 @@ export default function Dashboard({ onStartNew, onContinue, onRetake, onViewSumm
                 <Edit2 className="w-6 h-6 text-[#8AB4F8]" />
               </div>
               <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('renameExamTitle')}</h3>
-              <p className="text-[var(--text-secondary)] mb-6">Enter a new title for your exam.</p>
-              <input type="text" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} className="w-full bg-[var(--bg-accent)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:border-[#8AB4F8] transition-colors mb-8" placeholder="Exam Title" autoFocus />
+              <p className="text-[var(--text-secondary)] mb-6">{t('renameExamPrompt')}</p>
+              <input type="text" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} className="w-full bg-[var(--bg-accent)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:border-[#8AB4F8] transition-colors mb-8" placeholder={t('examTitlePlaceholder')} autoFocus />
               <div className="flex gap-3">
                 <button onClick={() => setRenamingExam(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
                 <button onClick={confirmRename} disabled={isUpdating || !newTitle.trim()} className="flex-1 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
@@ -560,6 +590,7 @@ export default function Dashboard({ onStartNew, onContinue, onRetake, onViewSumm
           onClose={() => setIsUploadModalOpen(false)}
           onUpload={onUpload}
           onProcessText={onProcessText}
+          onImportExam={onImportExam}
           isParsing={isParsing}
         />
       )}

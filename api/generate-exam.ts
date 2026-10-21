@@ -1,7 +1,18 @@
 import { processExamGeneration } from "../src/server/examService";
 
 export default async function handler(req: any, res: any) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  // CORS: only allow explicitly configured origins. The browser calls this
+  // endpoint same-origin, so no wildcard header is needed (and a wildcard let
+  // any third-party page consume this deployment's AI quota).
+  const allowedOrigins = (process.env.CORS_ORIGIN || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  const requestOrigin = req.headers?.origin;
+  if (requestOrigin && allowedOrigins.includes(requestOrigin)) {
+    res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -15,7 +26,11 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const clientIp = (req.headers && req.headers["x-forwarded-for"] as string) || (req.socket && req.socket.remoteAddress) || "unknown";
+    const forwarded = req.headers?.["x-forwarded-for"];
+    const clientIp =
+      (typeof forwarded === "string" ? forwarded.split(",")[0].trim() : "") ||
+      (req.socket && req.socket.remoteAddress) ||
+      "unknown";
     const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
     const result = await processExamGeneration(body, clientIp);
     return res.status(result.status).json(result.data);
