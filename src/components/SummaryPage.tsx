@@ -56,6 +56,31 @@ interface AIPlatform {
 
 const LETTERS = 'ABCDEFGHIJ';
 
+/** One number + label inside the result card. No boxes, no repeated words. */
+function Metric({
+  icon: Icon,
+  value,
+  label,
+  tone,
+}: {
+  icon: typeof CheckCircle2;
+  value: string | number;
+  label: string;
+  tone: string;
+}) {
+  return (
+    <div className="flex items-center gap-2.5 min-w-0 px-4 py-3">
+      <Icon className={`w-4 h-4 shrink-0 ${tone}`} />
+      <div className="min-w-0">
+        <div className={`text-lg font-black leading-none ${tone}`}>{value}</div>
+        <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] mt-1 truncate">
+          {label}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SummaryPage({
   userAnswers,
   questions,
@@ -70,6 +95,7 @@ export default function SummaryPage({
   const [copyFailed, setCopyFailed] = useState(false);
   const [copiedPlatform, setCopiedPlatform] = useState<string | null>(null);
   const [showReview, setShowReview] = useState(false);
+  const [showAiTools, setShowAiTools] = useState(false);
   const [expandedExplanations, setExpandedExplanations] = useState<Record<string, boolean>>({});
 
   const result = useMemo(() => gradeExam(questions, userAnswers), [questions, userAnswers]);
@@ -237,378 +263,364 @@ INSTRUCTIONS FOR AI TUTOR:
         ? 'text-amber-500'
         : 'text-red-500';
 
+  /** One short line that answers "how did I do?" — never repeats the numbers. */
+  const verdict = !hasScore
+    ? t('ungradedPracticeNote')
+    : missedCount === 0
+      ? t('allCorrect')
+      : t('summaryToReview', { count: missedCount });
+
+  const copyLabel = isCopied ? t('copied') : copyFailed ? t('copyFailed') : t('copyStudyPrompt');
+
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-10 md:py-14">
-      <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: 'easeOut' }}>
-        <div className="flex justify-center mb-5">
-          <div className="bg-emerald-500/10 p-4 rounded-full border border-emerald-500/20 shadow-xs text-emerald-500">
-            <CheckCircle2 className="w-12 h-12" />
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 md:py-12">
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: 'easeOut' }}>
+        {/* ---------------------------------------------------------------- */}
+        {/* Header: what was sat, in one line                                  */}
+        {/* ---------------------------------------------------------------- */}
+        <div className="flex items-start gap-3 mb-6">
+          <span className="w-10 h-10 shrink-0 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-500 flex items-center justify-center">
+            <CheckCircle2 className="w-5 h-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-lg sm:text-xl font-bold text-[var(--text-primary)] leading-tight">
+              {t('examCompleted')}
+            </h1>
+            <p className="text-sm font-semibold text-[#3b82f6] dark:text-[#8AB4F8] truncate">{title}</p>
           </div>
+          <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border-color)] text-[11px] font-bold text-[var(--text-secondary)] shrink-0">
+            {t('questionCountLabel', { count: result.total })}
+          </span>
         </div>
 
-        <h1 className="text-3xl md:text-4xl font-black text-[var(--text-primary)] mb-2 tracking-tight text-center">
-          {t('examCompleted')}
-        </h1>
-        <h2 className="text-lg md:text-xl font-bold text-[#3b82f6] dark:text-[#8AB4F8] mb-8 text-center">{title}</h2>
-
-        {/* Result summary */}
-        <div className="max-w-3xl mx-auto mb-12">
-          <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-3xl p-6 md:p-8 shadow-xs">
-            <div className="flex flex-col sm:flex-row items-center gap-6">
-              <div className="relative w-32 h-32 shrink-0">
-                <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90" aria-hidden="true">
-                  <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border-color)" strokeWidth="12" />
-                  <circle
-                    cx="60"
-                    cy="60"
-                    r="52"
-                    fill="none"
-                    stroke="currentColor"
-                    className={scoreTone}
-                    strokeWidth="12"
-                    strokeLinecap="round"
-                    strokeDasharray={`${hasScore ? (result.percentage / 100) * 326.7 : 0} 326.7`}
-                  />
-                </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className={`text-3xl font-black ${scoreTone}`}>
-                    {hasScore ? `${result.percentage}%` : '—'}
-                  </span>
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-secondary)]">
-                    {t('score')}
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex-1 w-full">
-                <div className="flex items-baseline justify-between mb-2">
-                  <h3 className="text-sm font-black uppercase tracking-widest text-[var(--text-secondary)]">
-                    {t('resultSummary')}
-                  </h3>
-                  <span className="text-sm font-bold text-[var(--text-primary)]">
-                    {t('answeredOfTotal', { answered: result.answered, total: result.total })}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <div className="flex items-center gap-2 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)]">{t('correct')}</p>
-                      <p className="text-lg font-black text-emerald-500 leading-none">{result.correct}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 rounded-xl border border-red-500/25 bg-red-500/10 px-3 py-2">
-                    <XCircle className="w-4 h-4 text-red-500 shrink-0" />
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)]">{t('incorrect')}</p>
-                      <p className="text-lg font-black text-red-500 leading-none">{result.incorrect}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 rounded-xl border border-[var(--border-color)] bg-[var(--bg-accent)] px-3 py-2">
-                    <MinusCircle className="w-4 h-4 text-[var(--text-secondary)] shrink-0" />
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)]">{t('skipped')}</p>
-                      <p className="text-lg font-black text-[var(--text-primary)] leading-none">{result.skipped}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 rounded-xl border border-[var(--border-color)] bg-[var(--bg-accent)] px-3 py-2">
-                    <Clock className="w-4 h-4 text-[#3b82f6] dark:text-[#8AB4F8] shrink-0" />
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)]">{t('timeSpent')}</p>
-                      <p className="text-lg font-black text-[var(--text-primary)] leading-none">
-                        {timeSpentSeconds ? formatDuration(timeSpentSeconds) : '—'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
-                  {result.graded === 0
-                    ? t('ungradedPracticeNote')
-                    : missedCount === 0
-                      ? t('allCorrect')
-                      : t('answeredQuestionsCount', { count: result.answered, total: result.total })}
-                </p>
-                {result.ungraded > 0 && (
-                  <p className="mt-2 text-[11px] font-semibold text-amber-500 flex items-center gap-1.5">
-                    <HelpCircle className="w-3.5 h-3.5 shrink-0" />
-                    {t('ungradedNote', { count: result.ungraded })}
-                  </p>
-                )}
+        {/* ---------------------------------------------------------------- */}
+        {/* Result card                                                        */}
+        {/* ---------------------------------------------------------------- */}
+        <section className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-3xl overflow-hidden">
+          <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-4 p-5 sm:p-6">
+            {/* Score ring */}
+            <div className="relative w-24 h-24 shrink-0 sm:mr-1">
+              <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90" aria-hidden="true">
+                <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border-color)" strokeWidth="12" />
+                <circle
+                  cx="60"
+                  cy="60"
+                  r="52"
+                  fill="none"
+                  stroke="currentColor"
+                  className={scoreTone}
+                  strokeWidth="12"
+                  strokeLinecap="round"
+                  strokeDasharray={`${hasScore ? (result.percentage / 100) * 326.7 : 0} 326.7`}
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className={`text-2xl font-black leading-none ${scoreTone}`}>
+                  {hasScore ? `${result.percentage}%` : '—'}
+                </span>
+                <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--text-secondary)] mt-1">
+                  {t('score')}
+                </span>
               </div>
             </div>
 
-            {/* Actions */}
-            <div className="mt-6 flex flex-col sm:flex-row gap-3">
-              <button
-                onClick={() => setShowReview((prev) => !prev)}
-                className="flex-1 flex items-center justify-center gap-2 rounded-2xl bg-[#8AB4F8] text-gray-900 font-bold py-3 hover:bg-[#AECBFA] transition-all text-sm"
-                aria-expanded={showReview}
-              >
-                <BookOpen className="w-4 h-4" />
-                {t('reviewAnswers')}
-                {showReview ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </button>
-              {onReviewMissed && missedCount > 0 && (
-                <button
-                  onClick={onReviewMissed}
-                  className="flex-1 flex items-center justify-center gap-2 rounded-2xl bg-[var(--bg-accent)] border border-[var(--border-color)] text-[var(--text-primary)] font-bold py-3 hover:bg-[var(--card-hover)] transition-all text-sm"
-                >
-                  <Target className="w-4 h-4" />
-                  {t('reviewMissed')} ({missedCount})
-                </button>
+            {/* Metric strip: four numbers, one word each */}
+            <div className="flex-1 w-full">
+              <p className="text-sm text-[var(--text-primary)] font-semibold text-center sm:text-left mb-1 px-1">
+                {verdict}
+              </p>
+              {result.ungraded > 0 && hasScore && (
+                <p className="mb-1 px-1 text-[11px] font-semibold text-amber-500 flex items-center justify-center sm:justify-start gap-1.5">
+                  <HelpCircle className="w-3.5 h-3.5 shrink-0" />
+                  {t('ungradedNote', { count: result.ungraded })}
+                </p>
               )}
-              {onRetake && (
-                <button
-                  onClick={onRetake}
-                  className="flex-1 flex items-center justify-center gap-2 rounded-2xl bg-[var(--bg-accent)] border border-[var(--border-color)] text-[var(--text-primary)] font-bold py-3 hover:bg-[var(--card-hover)] transition-all text-sm"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                  {t('retakeExam')}
-                </button>
-              )}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-y-1 md:gap-y-0 md:divide-x divide-[var(--border-color)] mt-2">
+                <Metric icon={CheckCircle2} value={result.correct} label={t('correct')} tone="text-emerald-500" />
+                <Metric icon={XCircle} value={result.incorrect} label={t('incorrect')} tone="text-red-500" />
+                <Metric
+                  icon={MinusCircle}
+                  value={result.skipped}
+                  label={t('skipped')}
+                  tone={result.skipped > 0 ? 'text-amber-500' : 'text-[var(--text-secondary)]'}
+                />
+                <Metric
+                  icon={Clock}
+                  value={timeSpentSeconds ? formatDuration(timeSpentSeconds) : '—'}
+                  label={t('timeSpent')}
+                  tone="text-[var(--text-primary)]"
+                />
+              </div>
             </div>
           </div>
 
-          {/* Question-by-question review */}
+          {/* Actions: one primary, two secondary, all the same height */}
+          <div className="border-t border-[var(--border-color)] p-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={() => setShowReview((prev) => !prev)}
+              aria-expanded={showReview}
+              className="flex items-center justify-center gap-2 rounded-xl bg-[#8AB4F8] text-gray-900 font-bold py-2.5 px-4 hover:bg-[#AECBFA] transition-all text-sm"
+            >
+              <BookOpen className="w-4 h-4 shrink-0" />
+              {t('reviewAnswers')}
+              {showReview ? <ChevronUp className="w-4 h-4 shrink-0" /> : <ChevronDown className="w-4 h-4 shrink-0" />}
+            </button>
+            {onReviewMissed && missedCount > 0 && (
+              <button
+                type="button"
+                onClick={onReviewMissed}
+                className="flex items-center justify-center gap-2 rounded-xl bg-[var(--bg-accent)] border border-[var(--border-color)] text-[var(--text-primary)] font-bold py-2.5 px-4 hover:bg-[var(--card-hover)] transition-all text-sm"
+              >
+                <Target className="w-4 h-4 shrink-0" />
+                <span className="truncate">{t('reviewMissedShort')}</span>
+                <span className="shrink-0 text-[10px] font-black px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-500">
+                  {missedCount}
+                </span>
+              </button>
+            )}
+            {onRetake && (
+              <button
+                type="button"
+                onClick={onRetake}
+                className="flex items-center justify-center gap-2 rounded-xl bg-[var(--bg-accent)] border border-[var(--border-color)] text-[var(--text-primary)] font-bold py-2.5 px-4 hover:bg-[var(--card-hover)] transition-all text-sm"
+              >
+                <RotateCcw className="w-4 h-4 shrink-0" />
+                {t('retakeExam')}
+              </button>
+            )}
+          </div>
+        </section>
+
+        {/* ---------------------------------------------------------------- */}
+        {/* Question-by-question review                                        */}
+        {/* ---------------------------------------------------------------- */}
+        <AnimatePresence initial={false}>
+          {showReview && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="mt-3 space-y-2.5">
+                {questions.map((question, index) => {
+                  const status = getAnswerStatus(question, userAnswers);
+                  const correctAnswer = getCorrectAnswer(question);
+                  const userAnswer = userAnswers[question.id];
+                  const explanationOpen = Boolean(expandedExplanations[question.id]);
+                  const statusStyles =
+                    status === 'correct'
+                      ? 'border-emerald-500/25'
+                      : status === 'incorrect'
+                        ? 'border-red-500/25'
+                        : 'border-[var(--border-color)]';
+                  const StatusIcon =
+                    status === 'correct' ? CheckCircle2 : status === 'incorrect' ? XCircle : HelpCircle;
+                  const statusTone =
+                    status === 'correct'
+                      ? 'text-emerald-500'
+                      : status === 'incorrect'
+                        ? 'text-red-500'
+                        : 'text-[var(--text-secondary)]';
+
+                  return (
+                    <div
+                      key={question.id}
+                      className={`rounded-2xl border bg-[var(--bg-secondary)] ${statusStyles} p-3.5`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <span className="shrink-0 mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-lg bg-[var(--bg-accent)] border border-[var(--border-color)] text-[11px] font-black text-[var(--text-secondary)]">
+                          {index + 1}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-semibold text-[var(--text-primary)] whitespace-pre-wrap leading-snug">
+                            <LatexText text={question.question} />
+                          </div>
+
+                          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                            <span className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-[var(--text-secondary)] shrink-0">{t('yourAnswer')}:</span>
+                              {userAnswer ? (
+                                <span className={`font-semibold truncate ${statusTone}`}>{userAnswer}</span>
+                              ) : (
+                                <span className="text-[var(--text-secondary)] italic">{t('notAnswered')}</span>
+                              )}
+                            </span>
+                            <span className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-[var(--text-secondary)] shrink-0">{t('correctAnswer')}:</span>
+                              <span
+                                className={`font-semibold truncate ${
+                                  correctAnswer ? 'text-emerald-500' : 'text-[var(--text-secondary)] italic'
+                                }`}
+                              >
+                                {correctAnswer ?? t('noAnswerKey')}
+                              </span>
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => toggleExplanation(question.id)}
+                            className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-bold text-[#3b82f6] dark:text-[#8AB4F8] hover:underline"
+                            aria-expanded={explanationOpen}
+                          >
+                            {explanationOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                            {explanationOpen ? t('hideExplanation') : t('showExplanation')}
+                          </button>
+                          {explanationOpen && (
+                            <div className="mt-2 rounded-xl bg-[var(--bg-accent)] border border-[var(--border-color)] p-3 text-xs text-[var(--text-primary)] leading-relaxed">
+                              <LatexText text={question.explanation || t('noExplanation')} />
+                            </div>
+                          )}
+                        </div>
+
+                        <StatusIcon className={`shrink-0 w-4 h-4 ${statusTone}`} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ---------------------------------------------------------------- */}
+        {/* Answer sheet: compact chips instead of a long vertical list        */}
+        {/* ---------------------------------------------------------------- */}
+        <section className="mt-8">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h2 className="text-sm font-bold text-[var(--text-primary)]">{t('yourAnswers')}</h2>
+            <button
+              type="button"
+              onClick={copyPrompt}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border-color)] px-3 py-1.5 text-[11px] font-bold text-[var(--text-primary)] hover:bg-[var(--bg-accent)] transition-colors"
+            >
+              {isCopied ? (
+                <Check className="w-3.5 h-3.5 text-emerald-500" />
+              ) : copyFailed ? (
+                <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
+              ) : (
+                <Copy className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
+              )}
+              {copyLabel}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5 rounded-2xl bg-[var(--bg-secondary)] border border-[var(--border-color)] p-3">
+            {questions.map((q, index) => {
+              const optionIndex = q.options.indexOf(userAnswers[q.id]);
+              const hasAnswer = optionIndex !== -1;
+              const isUnanswered = !hasAnswer;
+              const letter = isUnanswered ? '—' : LETTERS[optionIndex] || '?';
+              const correctAnswer = getCorrectAnswer(q);
+              const hasKey = correctAnswer !== undefined;
+              const isCorrect = hasAnswer && userAnswers[q.id] === correctAnswer;
+              const tone = isUnanswered
+                ? 'bg-red-500/10 text-red-500 border-red-500/20'
+                : !hasKey
+                  ? 'bg-[var(--bg-accent)] text-[var(--text-secondary)] border-[var(--border-color)]'
+                  : isCorrect
+                    ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
+                    : 'bg-red-500/10 text-red-500 border-red-500/20';
+              return (
+                <span
+                  key={q.id}
+                  title={`Q${index + 1}: ${isUnanswered ? t('notAnswered') : letter}`}
+                  aria-label={`Q${index + 1}: ${isUnanswered ? t('notAnswered') : letter}`}
+                  className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-bold ${tone}`}
+                >
+                  <span className="opacity-60 font-semibold">{index + 1}</span>
+                  <span>{letter}</span>
+                </span>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* ---------------------------------------------------------------- */}
+        {/* AI study tools: available, but folded away by default              */}
+        {/* ---------------------------------------------------------------- */}
+        <section className="mt-8">
+          <button
+            type="button"
+            onClick={() => setShowAiTools((prev) => !prev)}
+            aria-expanded={showAiTools}
+            className="w-full flex items-center gap-3 rounded-2xl bg-[var(--bg-secondary)] border border-[var(--border-color)] px-4 py-3 text-left hover:bg-[var(--bg-accent)] transition-colors"
+          >
+            <span className="w-8 h-8 shrink-0 rounded-xl bg-[#8AB4F8]/10 text-[#8AB4F8] flex items-center justify-center">
+              <Sparkles className="w-4 h-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-bold text-[var(--text-primary)]">{t('aiTutorTitle')}</span>
+              <span className="block text-[11px] text-[var(--text-secondary)] truncate">{t('aiTutorDesc')}</span>
+            </span>
+            {showAiTools ? (
+              <ChevronUp className="w-4 h-4 text-[var(--text-secondary)] shrink-0" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-[var(--text-secondary)] shrink-0" />
+            )}
+          </button>
+
           <AnimatePresence initial={false}>
-            {showReview && (
+            {showAiTools && (
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
                 exit={{ opacity: 0, height: 0 }}
                 className="overflow-hidden"
               >
-                <div className="mt-4 space-y-3">
-                  {questions.map((question, index) => {
-                    const status = getAnswerStatus(question, userAnswers);
-                    const correctAnswer = getCorrectAnswer(question);
-                    const userAnswer = userAnswers[question.id];
-                    const explanationOpen = Boolean(expandedExplanations[question.id]);
-                    const statusStyles =
-                      status === 'correct'
-                        ? 'border-emerald-500/30 bg-emerald-500/5'
-                        : status === 'incorrect'
-                          ? 'border-red-500/30 bg-red-500/5'
-                          : 'border-[var(--border-color)] bg-[var(--bg-secondary)]';
-
-                    return (
-                      <div key={question.id} className={`rounded-2xl border ${statusStyles} p-4 text-left`}>
-                        <div className="flex items-start gap-3">
-                          <span className="shrink-0 mt-0.5 inline-flex items-center justify-center w-8 h-8 rounded-xl bg-[var(--bg-accent)] border border-[var(--border-color)] text-xs font-black text-[var(--text-primary)]">
-                            {index + 1}
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm md:text-base font-semibold text-[var(--text-primary)] whitespace-pre-wrap">
-                              <LatexText text={question.question} />
-                            </div>
-
-                            <div className="mt-3 space-y-1.5 text-xs md:text-sm">
-                              <p className="flex items-start gap-2">
-                                <span className="font-bold text-[var(--text-secondary)] shrink-0">{t('yourAnswer')}:</span>
-                                {userAnswer ? (
-                                  <span
-                                    className={
-                                      status === 'correct'
-                                        ? 'text-emerald-500 font-semibold'
-                                        : status === 'incorrect'
-                                          ? 'text-red-500 font-semibold'
-                                          : 'text-[var(--text-primary)] font-semibold'
-                                    }
-                                  >
-                                    {userAnswer}
-                                  </span>
-                                ) : (
-                                  <span className="text-[var(--text-secondary)] italic">{t('notAnswered')}</span>
-                                )}
-                              </p>
-                              <p className="flex items-start gap-2">
-                                <span className="font-bold text-[var(--text-secondary)] shrink-0">{t('correctAnswer')}:</span>
-                                <span className={correctAnswer ? 'text-emerald-500 font-semibold' : 'text-[var(--text-secondary)] italic'}>
-                                  {correctAnswer ?? t('noAnswerKey')}
-                                </span>
-                              </p>
-                            </div>
-
-                            <button
-                              onClick={() => toggleExplanation(question.id)}
-                              className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#3b82f6] dark:text-[#8AB4F8] hover:underline"
-                              aria-expanded={explanationOpen}
-                            >
-                              {explanationOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                              {explanationOpen ? t('hideExplanation') : t('showExplanation')}
-                            </button>
-                            {explanationOpen && (
-                              <div className="mt-2 rounded-xl bg-[var(--bg-accent)] border border-[var(--border-color)] p-3 text-xs md:text-sm text-[var(--text-primary)] leading-relaxed">
-                                <LatexText text={question.explanation || t('noExplanation')} />
-                              </div>
-                            )}
-                          </div>
-
-                          <span className="shrink-0">
-                            {status === 'correct' ? (
-                              <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                            ) : status === 'incorrect' ? (
-                              <XCircle className="w-5 h-5 text-red-500" />
-                            ) : (
-                              <HelpCircle className="w-5 h-5 text-[var(--text-secondary)]" />
-                            )}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="pt-3">
+                  <div className="flex flex-wrap gap-2">
+                    {aiPlatforms.map((platform) => {
+                      const IconComponent = platform.icon;
+                      return (
+                        <button
+                          key={platform.id}
+                          type="button"
+                          onClick={() => handleLaunchAI(platform)}
+                          title={platform.description}
+                          className="group inline-flex items-center gap-2 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border-color)] px-3 py-2 text-xs font-bold text-[var(--text-primary)] hover:border-[#8AB4F8]/60 hover:bg-[var(--bg-accent)] transition-colors"
+                        >
+                          <IconComponent className={`w-3.5 h-3.5 ${platform.accentText}`} />
+                          {platform.name}
+                          <ExternalLink className="w-3 h-3 text-[var(--text-secondary)] opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-2.5 text-[11px] text-[var(--text-secondary)] leading-relaxed">
+                    {t('aiTutorHint')}
+                  </p>
+                  <AnimatePresence>
+                    {copiedPlatform && (
+                      <motion.p
+                        initial={{ opacity: 0, y: -4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        className="mt-2 text-[11px] font-bold text-emerald-500 flex items-center gap-1.5"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        {t('copiedAndOpening', { name: copiedPlatform })}
+                      </motion.p>
+                    )}
+                  </AnimatePresence>
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
+        </section>
+
+        <div className="mt-8 flex justify-center">
+          <button
+            type="button"
+            onClick={onReset}
+            className="group inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-transparent border border-[var(--border-color)] text-[var(--text-primary)] hover:bg-[var(--bg-accent)] transition-all text-sm font-bold"
+          >
+            {t('backToDashboard')}
+            <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+          </button>
         </div>
-
-        {/* Answer key */}
-        <div className="max-w-2xl mx-auto mb-16 text-left">
-          <div className="flex items-center justify-between mb-4 px-2">
-            <h3 className="text-xl font-black text-[var(--text-primary)]">{t('yourAnswers')}</h3>
-            <button
-              onClick={copyPrompt}
-              className="bg-[var(--bg-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] rounded-full px-5 py-2 text-xs font-bold flex items-center gap-2 hover:bg-[var(--bg-accent)] transition-all cursor-pointer shadow-xs"
-            >
-              {isCopied ? (
-                <>
-                  <Check className="w-4 h-4 text-emerald-500" />
-                  {t('copied')}
-                </>
-              ) : copyFailed ? (
-                <>
-                  <AlertCircle className="w-4 h-4 text-amber-500" />
-                  {t('copyFailed')}
-                </>
-              ) : (
-                <>
-                  <Copy className="w-4 h-4 text-[var(--text-secondary)]" />
-                  {t('copyToClipboard')}
-                </>
-              )}
-            </button>
-          </div>
-          <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl p-6 overflow-x-auto shadow-xs">
-            <div className="font-mono text-sm md:text-base text-[var(--text-primary)] leading-loose">
-              {questions.map((q, index) => {
-                const optionIndex = q.options.indexOf(userAnswers[q.id]);
-                const isUnanswered = optionIndex === -1;
-                const letter = isUnanswered ? t('notAnswered') : LETTERS[optionIndex] || '?';
-                return (
-                  <div key={q.id}>
-                    Q{index + 1}: <span className={isUnanswered ? 'text-red-500 font-bold' : ''}>{letter}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* AI study platforms */}
-        <div className="mt-10 pt-10 border-t border-[var(--border-color)]">
-          <div className="flex flex-col items-center justify-center mb-6">
-            <span className="inline-flex items-center gap-2 px-3.5 py-1 bg-[#3b82f6]/10 text-[#3b82f6] dark:text-[#8AB4F8] border border-[#3b82f6]/20 rounded-full text-xs font-black uppercase tracking-wider mb-2">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>{t('smartStudyAssistant')}</span>
-            </span>
-            <h3 className="text-xl sm:text-2xl font-black text-[var(--text-primary)] tracking-tight">
-              {t('continueStudyTitle')}
-            </h3>
-            <p className="text-xs sm:text-sm text-[var(--text-secondary)] max-w-lg mx-auto mt-1 font-medium leading-relaxed">
-              {t('continueStudyDesc')}
-            </p>
-          </div>
-
-          <div className="flex justify-center mb-8">
-            <button
-              onClick={copyPrompt}
-              className="bg-[var(--bg-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] rounded-full px-5 py-2.5 text-xs md:text-sm font-bold flex items-center gap-2 shadow-xs hover:bg-[var(--bg-accent)] transition-all cursor-pointer"
-            >
-              {isCopied ? (
-                <>
-                  <Check className="w-4 h-4 text-emerald-500" />
-                  {t('copied')}
-                </>
-              ) : copyFailed ? (
-                <>
-                  <AlertCircle className="w-4 h-4 text-amber-500" />
-                  {t('copyFailed')}
-                </>
-              ) : (
-                <>
-                  <Copy className="w-4 h-4 text-[var(--text-secondary)]" />
-                  {t('copyToClipboard')}
-                </>
-              )}
-            </button>
-          </div>
-
-          <AnimatePresence>
-            {copiedPlatform && (
-              <motion.div
-                initial={{ opacity: 0, y: -10, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -10, scale: 0.95 }}
-                className="mb-6 inline-flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white rounded-2xl text-xs font-bold shadow-lg"
-              >
-                <Check className="w-4 h-4" />
-                <span>{t('copiedAndOpening', { name: copiedPlatform })}</span>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5 text-left">
-            {aiPlatforms.map((platform) => {
-              const IconComponent = platform.icon;
-              return (
-                <button
-                  key={platform.id}
-                  onClick={() => handleLaunchAI(platform)}
-                  className={`group relative flex flex-col justify-between p-4 rounded-2xl bg-gradient-to-br ${platform.bgGradient} border ${platform.border} transition-all duration-200 hover:-translate-y-1 hover:shadow-lg active:translate-y-0 cursor-pointer overflow-hidden`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className={`p-2 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border-color)] shadow-2xs group-hover:scale-105 transition-transform ${platform.accentText}`}>
-                        <IconComponent className="w-5 h-5" />
-                      </div>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wider ${platform.badgeColor}`}>
-                        {platform.badge}
-                      </span>
-                    </div>
-
-                    <h4 className="text-base font-bold text-[var(--text-primary)] group-hover:text-[#3b82f6] dark:group-hover:text-[#8AB4F8] transition-colors flex items-center justify-between">
-                      <span>{platform.name}</span>
-                      <ExternalLink className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-[var(--text-secondary)]" />
-                    </h4>
-                    <p className="text-xs text-[var(--text-secondary)] font-medium mt-0.5 line-clamp-1">
-                      {platform.description}
-                    </p>
-                  </div>
-
-                  <div className="mt-4 pt-3 border-t border-[var(--border-color)]/50 flex items-center justify-between text-xs font-bold">
-                    <span className={`${platform.accentText} flex items-center gap-1 group-hover:underline`}>
-                      {t('copyAndLaunch')}
-                    </span>
-                    <span className="text-[10px] uppercase font-bold text-[var(--text-secondary)] opacity-60 group-hover:opacity-100 transition-opacity">
-                      {t('launchAI')} ↗
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <button
-          onClick={onReset}
-          className="mt-12 group inline-flex items-center gap-2 mx-auto px-7 py-3.5 rounded-2xl bg-[#3b82f6] text-white hover:bg-blue-600 transition-all text-sm font-bold shadow-lg cursor-pointer"
-        >
-          {t('backToDashboard')}
-          <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-        </button>
       </motion.div>
     </div>
   );
