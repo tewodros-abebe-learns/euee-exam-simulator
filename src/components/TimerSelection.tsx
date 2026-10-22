@@ -18,19 +18,19 @@ interface TimerSelectionProps {
 export default function TimerSelection({ onSelect, currentUser, onSignIn, recommendedSeconds, examTitle }: TimerSelectionProps) {
   const { t } = useLanguage();
   const [customMinutes, setCustomMinutes] = useState<string>('');
-  const [saveProgress, setSaveProgress] = useState<boolean>(!!currentUser);
+  // Saving progress is opt-in: a real exam does not pause and resume, so the
+  // default is "No". Choosing "Yes" enables the full save/resume path —
+  // continuous answer saving, an in-progress session on exit and resume after a
+  // refresh or a reconnect.
+  const [saveProgress, setSaveProgress] = useState<boolean>(false);
   const [showGuestSavePopup, setShowGuestSavePopup] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const saveBoxRef = useRef<HTMLDivElement>(null);
 
-  // Sync state if currentUser changes
+  // Signing in never flips the choice on by itself: the student's answer to
+  // "save progress?" is theirs, and it must stay "No" unless they say otherwise.
   useEffect(() => {
-    if (currentUser) {
-      setSaveProgress(true);
-      setShowGuestSavePopup(false);
-    } else {
-      setSaveProgress(false);
-    }
+    if (currentUser) setShowGuestSavePopup(false);
   }, [currentUser]);
 
   // Close popup when clicking outside

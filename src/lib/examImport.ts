@@ -1,4 +1,5 @@
 import { parseExamHeuristicallyDetailed } from './heuristicExamParser';
+import { isCsvExam, parseExamCsv } from './csvImport';
 import {
   EXAM_SCHEMA_VERSION,
   UNGRADED_ANSWER_INDEX,
@@ -26,10 +27,13 @@ export function stripCodeFence(raw: string): string {
   return fenced ? fenced[1].trim() : trimmed;
 }
 
-export function detectFormat(raw: string): 'json' | 'markdown' {
+export function detectFormat(raw: string): 'json' | 'markdown' | 'csv' {
   const stripped = stripCodeFence(raw).trim();
   if (!stripped) return 'markdown';
   if (stripped.startsWith('{') || stripped.startsWith('[')) return 'json';
+  // A spreadsheet export is recognised by its header row, not by its
+  // extension (pasted CSV has no file name at all).
+  if (isCsvExam(stripped)) return 'csv';
   return 'markdown';
 }
 
@@ -226,7 +230,12 @@ export function parseExamText(raw: string, defaults: ImportDefaults = {}): Impor
     };
   }
 
-  return detectFormat(cleaned) === 'json'
-    ? parseExamJson(cleaned, defaults)
-    : parseExamMarkdown(cleaned, defaults);
+  switch (detectFormat(cleaned)) {
+    case 'json':
+      return parseExamJson(cleaned, defaults);
+    case 'csv':
+      return parseExamCsv(cleaned, defaults);
+    default:
+      return parseExamMarkdown(cleaned, defaults);
+  }
 }

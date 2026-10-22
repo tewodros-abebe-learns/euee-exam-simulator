@@ -59,8 +59,10 @@ const FORMATS: FormatOption[] = [
   { id: 'json', labelKey: 'formatJson', accept: ['.json'], route: 'local' },
   { id: 'markdown', labelKey: 'formatMarkdown', accept: ['.md', '.markdown'], route: 'local' },
   { id: 'pdf', labelKey: 'formatPdf', accept: ['.pdf'], route: 'ai' },
-  { id: 'csv', labelKey: 'formatCsv', accept: ['.csv'], route: 'ai' },
-  { id: 'text', labelKey: 'formatText', accept: ['.txt'], route: 'ai' },
+  // CSV and plain text are read on the device like JSON/Markdown: no key, no
+  // quota. The import preview still offers "retry with AI" for messy papers.
+  { id: 'csv', labelKey: 'formatCsv', accept: ['.csv'], route: 'local' },
+  { id: 'text', labelKey: 'formatText', accept: ['.txt'], route: 'local' },
   { id: 'image', labelKey: 'formatImage', accept: ['.png', '.jpg', '.jpeg', '.webp'], route: 'ai' },
 ];
 
@@ -105,6 +107,9 @@ export default function ExamUploadModal({
   const [subjectError, setSubjectError] = useState('');
   const { subjects: subjectOptions, addSubject } = useSubjects();
   const [pastedText, setPastedText] = useState('');
+  // Optional: what the AI prompt should ask for. Empty means the prompt carries
+  // a "<my topic>" placeholder the student can fill in themselves.
+  const [promptTopic, setPromptTopic] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState('');
 
@@ -146,6 +151,7 @@ export default function ExamUploadModal({
     setIsDragging(false);
     setFormat('auto');
     setTab(defaultTab);
+    setPromptTopic('');
   }, [isOpen, defaultTab]);
 
   // Escape closes the dialog unless a save is in flight.
@@ -397,7 +403,14 @@ export default function ExamUploadModal({
   };
 
   const downloadAiPrompt = () => {
-    downloadText('exam-import-prompt.txt', buildAiPrompt(sampleFormat), 'text/plain');
+    // Topic-agnostic by default: the prompt adapts to whatever folder is
+    // selected, and only names a topic if the student typed one.
+    const prompt = buildAiPrompt(sampleFormat, {
+      topic: promptTopic.trim() || undefined,
+      subject: subject && subject !== 'All' ? subject : undefined,
+      grade: undefined,
+    });
+    downloadText('exam-import-prompt.txt', prompt, 'text/plain');
   };
 
   const issues = preview?.issues ?? [];
@@ -894,6 +907,15 @@ export default function ExamUploadModal({
                     </option>
                   ))}
                 </select>
+                <input
+                  type="text"
+                  value={promptTopic}
+                  onChange={(event) => setPromptTopic(event.target.value)}
+                  placeholder={t('promptTopicPlaceholder')}
+                  aria-label={t('promptTopicPlaceholder')}
+                  maxLength={120}
+                  className="bg-[var(--bg-accent)] border border-[var(--border-color)] rounded-lg px-2.5 py-1.5 text-[11px] text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:border-[#8AB4F8] transition-colors w-40"
+                />
                 <div className="ml-auto flex items-center gap-2.5 text-[11px]">
                   <button
                     type="button"

@@ -3,6 +3,7 @@ import { collection, query, where, onSnapshot, deleteDoc, doc, updateDoc, getDoc
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrorHandler';
 import { db, auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useOffline } from '../contexts/OfflineContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { FileText, Trash2, Edit2, Loader2, Search, FolderCog, FolderOpen, Upload, Type, X } from 'lucide-react';
@@ -15,6 +16,14 @@ import { offlineStorage } from '../lib/offlineStorage';
 import { gradeLabelKey, subjectDisplayName } from '../lib/subjects';
 import { useSubjects, folderForSubject } from '../lib/subjectStore';
 import { runWithTimeout, LOCAL_WRITE_TIMEOUT_MS, CLOUD_WRITE_TIMEOUT_MS } from '../lib/cloudWrite';
+import {
+  applyExamMutations,
+  clearExamMutation,
+  getExamMutations,
+  isExamDeleted,
+  queueExamDelete,
+  queueExamUpdate,
+} from '../lib/examMutations';
 
 interface Exam {
   id: string;
@@ -55,6 +64,7 @@ interface DashboardProps {
 
 export default function Dashboard({ onContinue, onRetake, onViewSummary, onUpload, onProcessText, onImportExam, isParsing }: DashboardProps) {
   const { currentUser, isFirebaseAuthed } = useAuth();
+  const { isOnline } = useOffline();
   const { t } = useLanguage();
   const [exams, setExams] = useState<Exam[]>([]);
   const [userExams, setUserExams] = useState<UserExam[]>([]);
@@ -120,7 +130,7 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
 
         setExams(prev => {
           const map = new Map<string, Exam>();
-          customLocalExams.forEach(le => {
+          applyExamMutations(customLocalExams).forEach(le => {
             map.set(le.id, {
               id: le.id,
               title: le.title,
@@ -194,7 +204,13 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
       );
 
       unsubscribeExams = onSnapshot(examsQuery, (snapshot) => {
-        const cloudExams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Exam));
+        // Deleted-here-but-not-yet-in-the-cloud exams must not reappear, and a
+        // pending rename must win over the cloud's older title.
+        const cloudExams = applyExamMutations(
+          snapshot.docs
+            .map(doc => ({ id: doc.id, ...doc.data() } as Exam))
+            .filter(doc => !isExamDeleted(doc.id))
+        );
         setExams(prev => {
           const map = new Map<string, Exam>();
           prev.forEach(pe => map.set(pe.id, pe));
@@ -269,6 +285,85 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
     return counts;
   }, [exams, folderSubjects]);
 
+  /**
+   * Replays edits that never reached Firestore (rename, move, delete).
+   *
+   * Renaming or deleting offline used to be undone by the next cloud snapshot.
+   * The edits are recorded in `examMutations` before the write is attempted and
+   * replayed here — on mount and whenever the connection comes back — then
+   * cleared once the backend confirms them.
+   */
+  useEffect(() => {
+    if (!currentUser || !isFirebaseAuthed || !isOnline) return;
+    if (!auth.currentUser || auth.currentUser.uid !== currentUser.uid) return;
+    const pending = getExamMutations();
+    if (pending.length === 0) return;
+
+    let cancelled = false;
+    const flush = async () => {
+      for (const op of pending) {
+        if (cancelled) return;
+        try {
+          if (op.type === 'delete') {
+            // Remove its sessions first, exactly like an online delete.
+            try {
+              const sessionsSnapshot = await getDocs(
+                query(collection(db, 'user_exams'), where('userId', '==', currentUser.uid))
+              );
+              const orphaned = sessionsSnapshot.docs.filter(
+                sessionDoc => (sessionDoc.data()?.examId as string | undefined) === op.id
+              );
+              await Promise.all(orphaned.map(sessionDoc => deleteDoc(sessionDoc.ref)));
+            } catch (sessionErr) {
+              console.warn('Session cleanup during replay:', sessionErr);
+            }
+            const confirmed = await runWithTimeout(
+              () => deleteDoc(doc(db, 'exams', op.id)),
+              CLOUD_WRITE_TIMEOUT_MS,
+              'Delete exam (replay)'
+            );
+            if (confirmed) clearExamMutation(op.id);
+          } else {
+            const confirmed = await runWithTimeout(
+              () => updateDoc(doc(db, 'exams', op.id), op.fields),
+              CLOUD_WRITE_TIMEOUT_MS,
+              'Update exam (replay)'
+            );
+            if (confirmed) clearExamMutation(op.id);
+          }
+        } catch (error: any) {
+          // The document is gone or no longer ours: retrying can never succeed.
+          const code = error?.code;
+          if (code === 'not-found' || code === 'permission-denied' || code === 'invalid-argument') {
+            clearExamMutation(op.id);
+          } else {
+            console.warn('Could not replay an exam edit; it will retry later:', error);
+          }
+        }
+      }
+    };
+
+    void flush();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, isFirebaseAuthed, isOnline]);
+
+  /**
+   * True when this exam exists in the cloud and this session may write to it.
+   * Local-only exams (`local_…`) and guests never produce pending mutations, so
+   * the queue cannot fill up with edits that can never be replayed.
+   */
+  const canWriteCloud = (examId?: string | null): boolean =>
+    Boolean(
+      examId &&
+        !examId.startsWith('local_') &&
+        currentUser &&
+        isFirebaseAuthed &&
+        auth.currentUser &&
+        auth.currentUser.uid === currentUser.uid
+    );
+
   // A folder that disappears (deleted here or in another tab) must not leave
   // the list filtered on a chip that no longer exists.
   useEffect(() => {
@@ -328,13 +423,20 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
         );
       }
       setExams(prev => prev.map(e => e.id === renamingExam.id ? { ...e, title: updatedTitle } : e));
-      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !renamingExam.id.startsWith('local_')) {
+      if (canWriteCloud(renamingExam.id)) {
         const id = renamingExam.id;
+        queueExamUpdate(id, { title: updatedTitle });
         void runWithTimeout(
           () => updateDoc(doc(db, 'exams', id), { title: updatedTitle }),
           CLOUD_WRITE_TIMEOUT_MS,
           'Rename exam (cloud)'
-        );
+        )
+          .then(confirmed => {
+            if (confirmed) clearExamMutation(id);
+          })
+          .catch(() => {
+            // Kept pending: it replays on the next start or reconnect.
+          });
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
@@ -360,12 +462,19 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
         );
       }
       setExams(prev => prev.map(e => e.id === movingId ? { ...e, subject: targetSubject } : e));
-      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !movingId.startsWith('local_')) {
+      if (canWriteCloud(movingId)) {
+        queueExamUpdate(movingId, { subject: targetSubject });
         void runWithTimeout(
           () => updateDoc(doc(db, 'exams', movingId), { subject: targetSubject }),
           CLOUD_WRITE_TIMEOUT_MS,
           'Move exam (cloud)'
-        );
+        )
+          .then(confirmed => {
+            if (confirmed) clearExamMutation(movingId);
+          })
+          .catch(() => {
+            // Kept pending for the next sync.
+          });
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
@@ -388,8 +497,10 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
         'Delete exam (local)'
       );
       setExams(prev => prev.filter(e => e.id !== targetId));
+      const cloudEligible = canWriteCloud(targetId);
+      if (cloudEligible) queueExamDelete(targetId);
 
-      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !targetId.startsWith('local_')) {
+      if (cloudEligible) {
         try {
           // Single-field query on purpose: `where('examId') + where('userId')`
           // needs a composite index, and without it the cleanup silently
@@ -407,11 +518,12 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
         } catch (sessionErr) {
           console.warn('User sessions cleanup notice:', sessionErr);
         }
-        await runWithTimeout(
+        const confirmed = await runWithTimeout(
           () => deleteDoc(doc(db, 'exams', targetId)),
           CLOUD_WRITE_TIMEOUT_MS,
           'Delete exam (cloud)'
         );
+        if (confirmed) clearExamMutation(targetId);
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);

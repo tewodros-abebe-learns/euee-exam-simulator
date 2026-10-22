@@ -535,6 +535,29 @@ function AppContent() {
           );
         }
       }
+      // A text-based PDF can often be read on the device. Trying that first
+      // means PDF papers import with no API key and no quota; a scanned PDF
+      // (no selectable text) falls through to the extractor below.
+      if (getFileExtension(file.name) === '.pdf') {
+        try {
+          const pdfText = await extractTextFromFile(file);
+          if (pdfText && pdfText.trim().length > 80) {
+            const report = parseExamText(pdfText, {
+              subject,
+              grade,
+              title: suggestTitleFromFileName(file.name),
+            });
+            const hardErrors = report.issues.filter((issue) => issue.level === 'error');
+            if (report.ok && report.exam && report.exam.questions.length >= 3 && hardErrors.length === 0) {
+              await handleImportExam(report.exam);
+              return;
+            }
+          }
+        } catch (pdfErr) {
+          console.warn('Local PDF import skipped:', pdfErr);
+        }
+      }
+
       if (file.size > 15 * 1024 * 1024) {
         throw new Error(t('fileTooLargeAi'));
       }

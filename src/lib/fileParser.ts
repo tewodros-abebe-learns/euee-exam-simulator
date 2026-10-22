@@ -6,7 +6,7 @@
  * Files that are already structured and must be imported on-device instead of
  * being sent to the AI extractor.
  */
-export const LOCAL_IMPORT_EXTENSIONS = ['.json', '.md', '.markdown'] as const;
+export const LOCAL_IMPORT_EXTENSIONS = ['.json', '.md', '.markdown', '.csv', '.txt'] as const;
 
 export function isLocalImportFile(file: File): boolean {
   return LOCAL_IMPORT_EXTENSIONS.includes(getFileExtension(file.name) as any);

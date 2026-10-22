@@ -220,6 +220,20 @@ export default function ExamInterface({
     }
   }, [currentIndex]);
 
+  // With progress saving OFF the attempt genuinely cannot be resumed, so an
+  // accidental refresh or closed tab would silently destroy every answer. The
+  // browser's own "leave site?" prompt is the only honest warning available.
+  useEffect(() => {
+    if (saveProgress) return;
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      if (hasSubmittedRef.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving);
+  }, [saveProgress]);
+
   // Auto-save to LocalStorage with quota & security error protection
   useEffect(() => {
     if (!saveProgress) return;
