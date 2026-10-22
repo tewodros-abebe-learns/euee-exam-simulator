@@ -15,8 +15,8 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
-import { isSupportedUpload, isLocalImportFile, SUPPORTED_UPLOAD_EXTENSIONS } from '../lib/fileParser';
-import { SUBJECTS, GRADES, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
+import { isLocalImportFile, SUPPORTED_UPLOAD_EXTENSIONS, getFileExtension } from '../lib/fileParser';
+import { SUBJECTS, GRADES, subjectLabelKey, gradeLabelKey, type TranslationKey } from '../lib/subjects';
 import { EXAM_JSON_TEMPLATE, suggestTitleFromFileName, type ImportReport, type ImportedExam } from '../lib/examSchema';
 import { parseExamText } from '../lib/examImport';
 
@@ -34,8 +34,38 @@ interface ExamUploadModalProps {
 
 type Tab = 'upload' | 'paste' | 'import';
 
-const IMPORTABLE_EXTENSIONS = ['.json', '.md', '.markdown', '.txt'];
+type ExamFormat = 'auto' | 'json' | 'markdown' | 'pdf' | 'csv' | 'text' | 'image';
+
+interface FormatOption {
+  id: ExamFormat;
+  labelKey: TranslationKey;
+  /** File extensions this format accepts. */
+  accept: string[];
+  /** `local` parses on the device, `ai` needs the extractor, `auto` decides per file. */
+  route: 'local' | 'ai' | 'auto';
+}
+
+/**
+ * Choosing a format up front keeps the picker, the drop zone and the parser in
+ * agreement, so a PDF can never be fed to the JSON reader (or vice versa).
+ */
+const FORMATS: FormatOption[] = [
+  { id: 'auto', labelKey: 'formatAuto', accept: [...SUPPORTED_UPLOAD_EXTENSIONS], route: 'auto' },
+  { id: 'json', labelKey: 'formatJson', accept: ['.json'], route: 'local' },
+  { id: 'markdown', labelKey: 'formatMarkdown', accept: ['.md', '.markdown'], route: 'local' },
+  { id: 'pdf', labelKey: 'formatPdf', accept: ['.pdf'], route: 'ai' },
+  { id: 'csv', labelKey: 'formatCsv', accept: ['.csv'], route: 'ai' },
+  { id: 'text', labelKey: 'formatText', accept: ['.txt'], route: 'ai' },
+  { id: 'image', labelKey: 'formatImage', accept: ['.png', '.jpg', '.jpeg', '.webp'], route: 'ai' },
+];
+
+const formatById = (id: ExamFormat): FormatOption => FORMATS.find((f) => f.id === id) || FORMATS[0];
+
+/** Local formats the "Import" tab can preview. */
+const LOCAL_FORMATS = FORMATS.filter((f) => f.route === 'local');
+
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+const IMPORT_CONFIRM_TIMEOUT_MS = 15000;
 
 function downloadText(filename: string, content: string, mime: string) {
   const blob = new Blob([content], { type: `${mime};charset=utf-8` });
@@ -63,6 +93,7 @@ export default function ExamUploadModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<Tab>('upload');
+  const [format, setFormat] = useState<ExamFormat>('auto');
   const [subject, setSubject] = useState(defaultSubject);
   const [grade, setGrade] = useState(defaultGrade);
   const [pastedText, setPastedText] = useState('');
@@ -76,6 +107,13 @@ export default function ExamUploadModal({
   const [isReadingFile, setIsReadingFile] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const pendingSourceRef = useRef<{ file?: File; text?: string } | null>(null);
+
+  const formatOption = formatById(format);
+  const isAiFormat = formatOption.route === 'ai';
+  // The Import tab can only preview formats the on-device parser understands.
+  const localAccept = (formatOption.route === 'local'
+    ? formatOption.accept
+    : Array.from(new Set(LOCAL_FORMATS.flatMap((option) => option.accept))));
 
   useEffect(() => {
     if (isOpen) {
@@ -91,7 +129,21 @@ export default function ExamUploadModal({
     setError('');
     setPreview(null);
     setIsDragging(false);
+    setFormat('auto');
+    setTab('upload');
   }, [isOpen]);
+
+  /** Selecting a format also moves the student to the tab that fits it. */
+  const applyFormat = (next: ExamFormat) => {
+    setFormat(next);
+    setError('');
+    setPreview(null);
+    setPreviewTitle('');
+    pendingSourceRef.current = null;
+    const nextOption = formatById(next);
+    if (nextOption.route === 'local') setTab('import');
+    else if (nextOption.route === 'ai') setTab('upload');
+  };
 
   if (!isOpen) return null;
 
@@ -161,14 +213,29 @@ export default function ExamUploadModal({
     }
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  /**
+   * Validates the picked file against the chosen format, then routes it to the
+   * on-device parser or to the AI extractor. One path for picker and drag-drop,
+   * so the two cannot disagree.
+   */
+  const handleSelectedFile = async (file: File) => {
     setError('');
+    const option = formatById(format);
+    const extension = getFileExtension(file.name);
 
-    // JSON/Markdown are structured already: import locally instead of paying
-    // for an AI call (and waiting for a network round trip).
-    if (isLocalImportFile(file)) {
+    if (!extension) {
+      setError(t('formatMismatch', { file: file.name, format: t(option.labelKey) }));
+      return;
+    }
+
+    if (format !== 'auto' && !option.accept.includes(extension)) {
+      setError(t('formatMismatch', { file: extension, format: t(option.labelKey) }));
+      return;
+    }
+
+    const route = option.route === 'auto' ? (isLocalImportFile(file) ? 'local' : 'ai') : option.route;
+
+    if (route === 'local') {
       await readLocalFile(file);
       return;
     }
@@ -181,29 +248,18 @@ export default function ExamUploadModal({
     }
   };
 
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await handleSelectedFile(file);
+  };
+
   const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
-    setError('');
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
-
-    if (isLocalImportFile(file)) {
-      await readLocalFile(file);
-      return;
-    }
-
-    if (!isSupportedUpload(file)) {
-      setError('Please upload a PDF, an image (PNG/JPG/WebP), or a plain-text/Markdown file.');
-      return;
-    }
-
-    try {
-      await onUpload(file, subject, grade);
-      onClose();
-    } catch (err: any) {
-      setError(err?.message || 'Failed to process document');
-    }
+    await handleSelectedFile(file);
   };
 
   const handlePasteSubmit = async () => {
@@ -232,17 +288,30 @@ export default function ExamUploadModal({
   const handleConfirmImport = async () => {
     if (!preview?.exam || !onImportExam) return;
     setIsImporting(true);
+    setError('');
+    let guard: ReturnType<typeof setTimeout> | undefined;
     try {
-      await onImportExam({
-        ...preview.exam,
-        title: previewTitle.trim() || preview.exam.title,
-        subject,
-        grade,
-      });
+      // Safety net: if a future change makes saving block, release the button
+      // instead of leaving a spinner that never ends.
+      await Promise.race([
+        onImportExam({
+          ...preview.exam,
+          title: previewTitle.trim() || preview.exam.title,
+          subject,
+          grade,
+        }),
+        new Promise<never>((_, reject) => {
+          guard = setTimeout(
+            () => reject(new Error(t('importStillWorking'))),
+            IMPORT_CONFIRM_TIMEOUT_MS
+          );
+        }),
+      ]);
       onClose();
     } catch (err: any) {
       setError(err?.message || 'Could not add the exam.');
     } finally {
+      if (guard) clearTimeout(guard);
       setIsImporting(false);
     }
   };
@@ -297,16 +366,31 @@ export default function ExamUploadModal({
           </button>
         </div>
 
-        {/* Beta Warning */}
-        <div className="mb-5 p-3.5 rounded-xl bg-orange-400/10 border border-orange-400/20 text-orange-400 text-xs flex items-start gap-3">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <strong className="font-bold block mb-1">{t('betaFeatureLabel')}</strong>
-            <p className="leading-relaxed opacity-90">
-              AI extraction is still experimental and may struggle with complex layouts or handwriting. Check the generated
-              questions before you rely on them for revision.
-            </p>
-          </div>
+        {/* Exam format: drives the file picker, the drop zone and the parser */}
+        <div className="mb-4">
+          <label
+            htmlFor="exam-format"
+            className="block text-[11px] font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-2"
+          >
+            {t('examFormatLabel')}
+          </label>
+          <select
+            id="exam-format"
+            value={format}
+            onChange={(e) => applyFormat(e.target.value as ExamFormat)}
+            className="w-full bg-[var(--bg-accent)] border border-[var(--border-color)] rounded-xl px-3.5 py-2.5 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[#8AB4F8] transition-colors"
+          >
+            {FORMATS.map((option) => (
+              <option key={option.id} value={option.id} className="bg-[var(--bg-secondary)] text-[var(--text-primary)]">
+                {t(option.labelKey)}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-[11px] text-[var(--text-secondary)] leading-relaxed">
+            {t('formatAccepts', { extensions: formatOption.accept.join(' ') })}
+            {' · '}
+            {isAiFormat ? t('formatAiNote') : formatOption.route === 'local' ? t('formatLocalNote') : ''}
+          </p>
         </div>
 
         {/* Tab Selector */}
@@ -319,10 +403,12 @@ export default function ExamUploadModal({
             <Type className="w-4 h-4" />
             {t('pasteTextTab')}
           </button>
-          <button type="button" onClick={() => { setTab('import'); setError(''); }} className={tabClass('import')}>
-            <FileJson className="w-4 h-4" />
-            {t('importTab')}
-          </button>
+          {!isAiFormat && (
+            <button type="button" onClick={() => { setTab('import'); setError(''); }} className={tabClass('import')}>
+              <FileJson className="w-4 h-4" />
+              {t('importTab')}
+            </button>
+          )}
         </div>
 
         {/* Subject & Grade Selection */}
@@ -369,7 +455,7 @@ export default function ExamUploadModal({
               type="file"
               ref={fileInputRef}
               onChange={handleFileChange}
-              accept={SUPPORTED_UPLOAD_EXTENSIONS.join(',')}
+              accept={formatOption.accept.join(',')}
               className="hidden"
             />
 
@@ -396,8 +482,12 @@ export default function ExamUploadModal({
               <h4 className="text-base font-bold text-[var(--text-primary)] mb-1.5">
                 {isParsing ? t('processingFile') : t('dragDropText')}
               </h4>
-              <p className="text-xs text-[var(--text-secondary)] max-w-sm">{t('supportedFormats')}</p>
-              <p className="text-[11px] text-[var(--text-secondary)]/80 mt-2">{t('jsonSkipsAi')}</p>
+              <p className="text-xs text-[var(--text-secondary)] max-w-sm">
+                {t('formatAccepts', { extensions: formatOption.accept.join(' ') })}
+              </p>
+              <p className="text-[11px] text-[var(--text-secondary)]/80 mt-2">
+                {formatOption.route === 'local' ? t('jsonSkipsAi') : isAiFormat ? t('formatAiNote') : t('supportedFormats')}
+              </p>
             </div>
 
             <div className="flex gap-3 justify-end mt-6">
@@ -445,15 +535,17 @@ export default function ExamUploadModal({
               >
                 {t('cancel')}
               </button>
-              <button
-                type="button"
-                onClick={handlePasteImport}
-                disabled={!pastedText.trim()}
-                className="px-5 py-2.5 bg-white/5 border border-[var(--border-color)] text-[var(--text-primary)] rounded-xl font-bold hover:bg-white/10 transition-all flex items-center gap-2 text-xs disabled:opacity-50"
-              >
-                <ChevronRight className="w-4 h-4" />
-                {t('importWithoutAi')}
-              </button>
+              {!isAiFormat && (
+                <button
+                  type="button"
+                  onClick={handlePasteImport}
+                  disabled={!pastedText.trim()}
+                  className="px-5 py-2.5 bg-white/5 border border-[var(--border-color)] text-[var(--text-primary)] rounded-xl font-bold hover:bg-white/10 transition-all flex items-center gap-2 text-xs disabled:opacity-50"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                  {t('importWithoutAi')}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handlePasteSubmit}
@@ -477,7 +569,7 @@ export default function ExamUploadModal({
                 const file = e.target.files?.[0];
                 if (file) void readLocalFile(file);
               }}
-              accept={IMPORTABLE_EXTENSIONS.join(',')}
+              accept={localAccept.join(',')}
               className="hidden"
             />
 
@@ -639,7 +731,7 @@ export default function ExamUploadModal({
                   >
                     {t('chooseAnotherFile')}
                   </button>
-                  {!preview.ok && pendingSourceRef.current && (
+                  {!preview.ok && pendingSourceRef.current && format !== 'json' && (
                     <button
                       type="button"
                       onClick={retryWithAi}
