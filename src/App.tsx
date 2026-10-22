@@ -53,7 +53,7 @@ function AppContent() {
   const [originalExam, setOriginalExam] = useState<any | null>(null);
   const [lastResult, setLastResult] = useState<{ score: number; total: number; percentage: number; duration: number; completedAt: number } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const { currentUser, logout, isInitializing: authLoading, isFirebaseAuthed } = useAuth();
+  const { currentUser, logout, loginWithGoogle, isInitializing: authLoading, isFirebaseAuthed } = useAuth();
   const { saveExamLocally, saveSessionLocally, isOnline } = useOffline();
 
   const [isGuestMode, setIsGuestMode] = useState(() => localStorage.getItem('onboarded') === 'true');
@@ -68,6 +68,9 @@ function AppContent() {
   useEffect(() => {
     if (currentUser) {
       setShowOnboarding(false);
+      // Signing in (by any method, including Google) ends guest mode, so the
+      // dashboard is no longer limited to device-only data.
+      setIsGuestMode(false);
       localStorage.setItem('euee_initial_setup_completed', 'true');
       localStorage.setItem('onboarded', 'true');
     }
@@ -692,6 +695,7 @@ function AppContent() {
            setIsGuestMode(false);
            setView('UPLOAD');
         }}
+        onGoogleSignIn={loginWithGoogle}
       />
       
       <OfflineBanner />

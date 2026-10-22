@@ -65,7 +65,40 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
 
 - **Database & Authentication**:
   - **Cloud Database**: Google Cloud Firestore (provisioned with strict per-user security rules)
-  - **Authentication**: Firebase Authentication (Email/Password & Anonymous Guest sessions)
+  - **Authentication**: Firebase Authentication — Google sign-in, Email/Password, and guest sessions
+
+---
+
+## 🔐 Enabling Google Sign-In
+
+The app ships the button and the whole flow, but Google sign-in only works once
+the Firebase project allows it:
+
+1. Firebase console → **Authentication** → **Sign-in method** → enable **Google**
+   (set the public-facing project name and support email).
+2. **Authentication** → **Settings** → **Authorized domains**: add every domain
+   the app is served from (`localhost` is present by default, the
+   `*.firebaseapp.com` domain too). `vercel.app` preview domains must be added
+   explicitly, otherwise Google returns `auth/unauthorized-domain`.
+3. Nothing is stored in env vars: the OAuth web client id already lives in
+   `firebase-applet-config.json`, and the browser only sees the public config.
+
+How it behaves:
+
+- Desktop/Android: `signInWithPopup` (with `prompt=select_account`, so the
+  student always picks an account).
+- Installed PWA (standalone display mode): `signInWithRedirect`, because a
+  popup has no reliable return path there. The result is collected by
+  `getRedirectResult` on the next load.
+- Popup blocked outside an iframe: falls back to the redirect flow silently.
+- Inside an iframe preview (where popups are blocked and a redirect would be
+  refused by Google): an explicit "open in a new tab" message instead of a
+  dead end.
+- Closing the Google window is treated as "no action", not as an error.
+- Firestore rules are uid-based, so a Google account uses exactly the same
+  per-user rules as an email account — no rules change is needed.
+- Exams created in guest mode are moved into the Google account by the existing
+  guest-sync effect on first sign-in.
 
 ---
 
