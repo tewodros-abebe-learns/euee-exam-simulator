@@ -1,15 +1,17 @@
-import React, {
+import {
   createContext,
   useContext,
   useState,
   useEffect,
   useCallback,
   useMemo,
+  useRef,
   type ReactNode,
 } from 'react';
 import { offlineStorage, type OfflineExam, type OfflineSession } from '../lib/offlineStorage';
 import { useLanguage } from './LanguageContext';
 import { db, auth } from '../firebase';
+import { runWithTimeout, CLOUD_WRITE_TIMEOUT_MS } from '../lib/cloudWrite';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 
 interface BeforeInstallPromptEvent extends Event {
@@ -27,6 +29,8 @@ interface OfflineContextType {
   promptInstall: () => Promise<boolean>;
   triggerSync: () => Promise<void>;
   saveExamLocally: (exam: OfflineExam) => Promise<void>;
+  /** Queues an exam whose cloud write did not complete, for replay on reconnect. */
+  queueExamForSync: (exam: OfflineExam) => Promise<void>;
   saveSessionLocally: (session: OfflineSession) => Promise<void>;
   getOfflineExamsList: (subject?: string) => Promise<OfflineExam[]>;
   getOfflineSessionData: (sessionId: string) => Promise<OfflineSession | null>;
@@ -117,7 +121,116 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
     };
   }, [t]);
 
-  // 3. Online/Offline Network Event Listeners & Automatic Sync Trigger
+  // 3. Synchronization Logic
+  //    Pushes every unsynced local session (not only queued ones) and any
+  //    exams created offline, then marks them as synced.
+  const syncInFlightRef = useRef(false);
+  const triggerSync = useCallback(async () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    const currentAuthUser = auth.currentUser;
+    if (!currentAuthUser) return;
+    // Two triggers (reconnect + a manual retry) must never replay the same
+    // queue twice: the second call simply joins the run already in progress.
+    if (syncInFlightRef.current) return;
+    syncInFlightRef.current = true;
+
+    setIsSyncing(true);
+    const syncedSessionIds = new Set<string>();
+    try {
+      const queue = await offlineStorage.getSyncQueue();
+
+      // 3a. Exams created while offline are uploaded under their local id.
+      for (const item of queue) {
+        if (item.type !== 'CREATE_EXAM') continue;
+        try {
+          const exam = item.payload as OfflineExam;
+          let uploaded = true;
+          if (exam?.id && exam.createdBy === currentAuthUser.uid) {
+            uploaded = await runWithTimeout(
+              () =>
+                setDoc(doc(db, 'exams', exam.id), {
+                  title: exam.title,
+                  subject: exam.subject,
+                  grade: exam.grade,
+                  questions: exam.questions,
+                  createdBy: currentAuthUser.uid,
+                  createdAt: serverTimestamp(),
+                }),
+              CLOUD_WRITE_TIMEOUT_MS,
+              'Offline exam sync'
+            );
+          }
+          // Keep the entry queued if the backend never acknowledged it.
+          if (uploaded && item.id) await offlineStorage.clearSyncQueueItem(item.id);
+        } catch (itemErr) {
+          console.warn('Offline exam sync failed, will retry on the next connection:', itemErr);
+        }
+      }
+
+      // 3b. Every stored session that still needs mirroring.
+      const sessions = await offlineStorage.getAllSessions(currentAuthUser.uid);
+      for (const session of sessions) {
+        if (session.syncedWithCloud) continue;
+        if (session.userId !== currentAuthUser.uid) continue;
+        if (!session.id || session.id.startsWith('guest-')) continue;
+        try {
+          const written = await runWithTimeout(
+            () =>
+              setDoc(
+                doc(db, 'user_exams', session.id),
+                {
+                  userId: currentAuthUser.uid,
+                  examId: session.examId,
+                  status: session.status || 'IN_PROGRESS',
+                  answers: session.answers || {},
+                  score: session.score ?? null,
+                  total: session.total ?? null,
+                  percentage: session.percentage ?? null,
+                  startTime: session.startTime,
+                  timeLimit: session.timeLimit,
+                  duration: session.timeSpent ?? null,
+                  lastUpdated: serverTimestamp(),
+                },
+                { merge: true }
+              ),
+            CLOUD_WRITE_TIMEOUT_MS,
+            'Session sync'
+          );
+          if (!written) continue;
+          await offlineStorage.markSessionSynced(session.id);
+          syncedSessionIds.add(session.id);
+        } catch (sessionErr) {
+          console.warn('Session sync failed, will retry on the next connection:', sessionErr);
+        }
+      }
+
+      // 3c. Remove queue entries that no longer need replaying. A session that
+      //     failed to mirror keeps its entry so the next cycle retries it.
+      for (const item of queue) {
+        if (item.type === 'CREATE_EXAM') continue;
+        if (item.type === 'SAVE_SESSION') {
+          const queuedId = (item.payload as OfflineSession | undefined)?.id;
+          if (queuedId && !syncedSessionIds.has(queuedId)) continue;
+        }
+        if (item.id) {
+          try {
+            await offlineStorage.clearSyncQueueItem(item.id);
+          } catch {
+            // Ignore: the queue is best-effort.
+          }
+        }
+      }
+
+      await refreshStats();
+    } catch (syncErr) {
+      console.warn('Offline sync cycle notice:', syncErr);
+    } finally {
+      syncInFlightRef.current = false;
+      setIsSyncing(false);
+    }
+  }, [refreshStats]);
+
+  // 4. Online/Offline Network Event Listeners & Automatic Sync Trigger
   useEffect(() => {
     const handleOnline = async () => {
       setIsOnline(true);
@@ -142,90 +255,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
-
-  // 4. Synchronization Logic
-  //    Pushes every unsynced local session (not only queued ones) and any
-  //    exams created offline, then marks them as synced.
-  const triggerSync = useCallback(async () => {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-    const currentAuthUser = auth.currentUser;
-    if (!currentAuthUser) return;
-
-    setIsSyncing(true);
-    try {
-      const queue = await offlineStorage.getSyncQueue();
-
-      // 4a. Exams created while offline are uploaded under their local id.
-      for (const item of queue) {
-        if (item.type !== 'CREATE_EXAM') continue;
-        try {
-          const exam = item.payload as OfflineExam;
-          if (exam?.id && exam.createdBy === currentAuthUser.uid) {
-            await setDoc(doc(db, 'exams', exam.id), {
-              title: exam.title,
-              subject: exam.subject,
-              grade: exam.grade,
-              questions: exam.questions,
-              createdBy: currentAuthUser.uid,
-              createdAt: serverTimestamp(),
-            });
-          }
-          if (item.id) await offlineStorage.clearSyncQueueItem(item.id);
-        } catch (itemErr) {
-          console.warn('Offline exam sync failed, will retry on the next connection:', itemErr);
-        }
-      }
-
-      // 4b. Every stored session that still needs mirroring.
-      const sessions = await offlineStorage.getAllSessions(currentAuthUser.uid);
-      for (const session of sessions) {
-        if (session.syncedWithCloud) continue;
-        if (session.userId !== currentAuthUser.uid) continue;
-        if (!session.id || session.id.startsWith('guest-')) continue;
-        try {
-          await setDoc(
-            doc(db, 'user_exams', session.id),
-            {
-              userId: currentAuthUser.uid,
-              examId: session.examId,
-              status: session.status || 'IN_PROGRESS',
-              answers: session.answers || {},
-              score: session.score ?? null,
-              total: session.total ?? null,
-              percentage: session.percentage ?? null,
-              startTime: session.startTime,
-              timeLimit: session.timeLimit,
-              duration: session.timeSpent ?? null,
-              lastUpdated: serverTimestamp(),
-            },
-            { merge: true }
-          );
-          await offlineStorage.markSessionSynced(session.id);
-        } catch (sessionErr) {
-          console.warn('Session sync failed, will retry on the next connection:', sessionErr);
-        }
-      }
-
-      // 4c. Remove queue entries that no longer need replaying.
-      for (const item of queue) {
-        if (item.type === 'CREATE_EXAM') continue;
-        if (item.id) {
-          try {
-            await offlineStorage.clearSyncQueueItem(item.id);
-          } catch {
-            // Ignore: the queue is best-effort.
-          }
-        }
-      }
-
-      await refreshStats();
-    } catch (syncErr) {
-      console.warn('Offline sync cycle notice:', syncErr);
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [refreshStats]);
+  }, [triggerSync]);
 
   // 5. Prompt Install Trigger
   const promptInstall = useCallback(async (): Promise<boolean> => {
@@ -256,6 +286,20 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       });
     }
     await refreshStats();
+  }, [refreshStats]);
+
+  const queueExamForSync = useCallback(async (exam: OfflineExam) => {
+    if (!exam?.id) return;
+    try {
+      await offlineStorage.addToSyncQueue({
+        type: 'CREATE_EXAM',
+        payload: exam,
+        timestamp: Date.now(),
+      });
+      await refreshStats();
+    } catch (error) {
+      console.warn('Could not queue the exam for a later sync:', error);
+    }
   }, [refreshStats]);
 
   const saveSessionLocally = useCallback(async (session: OfflineSession) => {
@@ -293,6 +337,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       promptInstall,
       triggerSync,
       saveExamLocally,
+      queueExamForSync,
       saveSessionLocally,
       getOfflineExamsList,
       getOfflineSessionData,
@@ -311,6 +356,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       promptInstall,
       triggerSync,
       saveExamLocally,
+      queueExamForSync,
       saveSessionLocally,
       getOfflineExamsList,
       getOfflineSessionData,

@@ -85,8 +85,12 @@ export async function extractTextFromFile(file: File): Promise<string> {
       const pdfDoc = await loadingTask.promise;
       const textPieces: string[] = [];
 
-      const maxPages = Math.min(pdfDoc.numPages, 40); // Read up to 40 pages
-      for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+      // Read the whole paper, not a fixed number of pages: a 60-question
+      // booklet used to lose every question after page 40 when the AI had to
+      // fall back to text-only. The character budget is the real limit.
+      const MAX_EXTRACTED_CHARS = 400_000;
+      let extractedChars = 0;
+      for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
         const page = await pdfDoc.getPage(pageNum);
         const textContent = await page.getTextContent();
         const pageText = textContent.items
@@ -95,7 +99,9 @@ export async function extractTextFromFile(file: File): Promise<string> {
           .join(' ');
         if (pageText.trim()) {
           textPieces.push(pageText);
+          extractedChars += pageText.length;
         }
+        if (extractedChars >= MAX_EXTRACTED_CHARS) break;
       }
 
       return textPieces.join('\n\n');

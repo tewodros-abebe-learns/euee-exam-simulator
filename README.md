@@ -65,7 +65,71 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
 
 - **Database & Authentication**:
   - **Cloud Database**: Google Cloud Firestore (provisioned with strict per-user security rules)
-  - **Authentication**: Firebase Authentication (Email/Password & Anonymous Guest sessions)
+  - **Authentication**: Firebase Authentication — Google sign-in, Email/Password, and guest sessions
+
+---
+
+## 🔐 Enabling Google Sign-In
+
+The app is wired to the Firebase project **`gen-lang-client-0826296814`**
+(configured in `firebase-applet-config.json`; `VITE_FIREBASE_*` env vars
+override it). It uses the project's **default** Firestore database, so no
+named database is required.
+
+The app ships the Google button and the whole flow, but sign-in only works once
+the Firebase project allows it:
+
+0. **Firestore Database → Create database** → Standard edition → pick a region →
+   production mode. Then **Firestore → Rules**, paste `firestore.rules`,
+   **Publish**. Without a database, auth still works but nothing is saved to the
+   cloud (the app falls back to on-device storage).
+
+1. Firebase console → **Authentication** → **Sign-in method** → enable **Google**
+   (set the public-facing project name and support email).
+2. **Authentication** → **Settings** → **Authorized domains**: add every domain
+   the app is served from (`localhost` is present by default, the
+   `*.firebaseapp.com` domain too). `vercel.app` preview domains must be added
+   explicitly, otherwise Google returns `auth/unauthorized-domain`.
+3. No secrets are involved: the web config in `firebase-applet-config.json` is
+   public (it ships in the browser bundle), so it is safe to commit. Never put
+   `VITE_FIREBASE_*` values that belong to a different project than the one
+   holding your Firestore rules.
+
+How it behaves:
+
+- Desktop/Android: `signInWithPopup` (with `prompt=select_account`, so the
+  student always picks an account).
+- Installed PWA (standalone display mode): `signInWithRedirect`, because a
+  popup has no reliable return path there. The result is collected by
+  `getRedirectResult` on the next load.
+- Popup blocked outside an iframe: falls back to the redirect flow silently.
+- Inside an iframe preview (where popups are blocked and a redirect would be
+  refused by Google): an explicit "open in a new tab" message instead of a
+  dead end.
+- Closing the Google window is treated as "no action", not as an error.
+- Firestore rules are uid-based, so a Google account uses exactly the same
+  per-user rules as an email account — no rules change is needed.
+- Exams created in guest mode are moved into the Google account by the existing
+  guest-sync effect on first sign-in.
+
+### The "Dynamic Links shutting down" warning
+
+The Firebase console shows a notice in Authentication saying that **email link
+(passwordless) authentication for mobile apps** and **Cordova OAuth support for
+web apps** stop working when Firebase Dynamic Links shuts down. Neither applies
+here:
+
+- The app never uses email-link / passwordless sign-in (no
+  `sendSignInLinkToEmail` / `signInWithEmailLink` anywhere in `src/`).
+- It is a PWA served over HTTPS, not a Cordova container. "Installed PWA" only
+  means `display-mode: standalone`; the redirect flow still uses the normal web
+  handler at `<project>.firebaseapp.com/__/auth/handler`, not a Dynamic Link.
+- No Dynamic Links SDK, short links or `page.link` domain is used.
+
+The auth methods actually in use are `signInWithPopup`, `signInWithRedirect`,
+`signInWithEmailAndPassword`, `createUserWithEmailAndPassword` and `signOut`.
+If a native store app is ever built, use a Trusted Web Activity or native Google
+sign-in plugins — not Cordova OAuth or email links.
 
 ---
 

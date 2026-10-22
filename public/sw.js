@@ -50,6 +50,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // API responses are live data; never serve them from the cache.
+  if (url.pathname.startsWith('/api/')) {
+    return;
+  }
+
   // Skip Firebase Firestore & Auth streaming/long-polling requests (Firestore has its own built-in offline cache)
   if (url.hostname.includes('firestore.googleapis.com') || url.hostname.includes('identitytoolkit') || url.hostname.includes('firebase')) {
     return;

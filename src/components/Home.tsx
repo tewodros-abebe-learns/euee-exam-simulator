@@ -1,17 +1,19 @@
 import { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, onSnapshot, orderBy, deleteDoc, doc, updateDoc, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, deleteDoc, doc, updateDoc, getDocs } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrorHandler';
 import { db, auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { FileText, Trash2, Edit2, Loader2, Search, CheckCircle2, FolderOpen, Upload, Type } from 'lucide-react';
+import { FileText, Trash2, Edit2, Loader2, Search, CheckCircle2, FolderOpen, Upload, Type, X } from 'lucide-react';
 import ExamUploadModal from './ExamUploadModal';
 import ExportExamButton from './ExportExamButton';
 import type { ImportedExam } from '../lib/examSchema';
 
 import { offlineStorage } from '../lib/offlineStorage';
-import { SUBJECTS as CANONICAL_SUBJECTS, GRADES, matchesSubject, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
+import { gradeLabelKey, subjectDisplayName } from '../lib/subjects';
+import { useSubjects, folderForSubject } from '../lib/subjectStore';
+import { runWithTimeout, LOCAL_WRITE_TIMEOUT_MS, CLOUD_WRITE_TIMEOUT_MS } from '../lib/cloudWrite';
 
 interface Exam {
   id: string;
@@ -45,7 +47,7 @@ interface HomeProps {
   isParsing?: boolean;
 }
 
-const SUBJECTS: string[] = ['All', ...CANONICAL_SUBJECTS];
+
 
 export default function Home({ onContinue, onRetake, onViewSummary, onUpload, onProcessText, onImportExam, isParsing }: HomeProps) {
   const { currentUser, isFirebaseAuthed } = useAuth();
@@ -64,9 +66,22 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
   const [movingExam, setMovingExam] = useState<Exam | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [newSubject, setNewSubject] = useState('');
-  const [newGrade, setNewGrade] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+
+  // Escape closes whichever confirmation dialog is open, so a stray key press
+  // never traps the student inside a modal.
+  useEffect(() => {
+    if (!deletingExamId && !renamingExam && !movingExam) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (deletingExamId && !isDeleting) setDeletingExamId(null);
+      if (renamingExam && !isUpdating) setRenamingExam(null);
+      if (movingExam && !isUpdating) setMovingExam(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [deletingExamId, renamingExam, movingExam, isDeleting, isUpdating]);
 
   useEffect(() => {
     if (deletingExamId || renamingExam || movingExam || isUploadModalOpen) {
@@ -78,6 +93,13 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
       document.body.style.overflow = '';
     };
   }, [deletingExamId, renamingExam, movingExam, isUploadModalOpen]);
+
+  // Last-resort failsafe: whatever is slow (IndexedDB, a stalled listener), the
+  // list must never be stuck behind a spinner.
+  useEffect(() => {
+    const failsafe = window.setTimeout(() => setLoading(false), 8000);
+    return () => window.clearTimeout(failsafe);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -213,16 +235,21 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
     };
   }, [currentUser, isFirebaseAuthed]);
 
-  const getSubjectName = (subj: string) => t(subjectLabelKey(subj));
+  const { subjects: folderSubjects } = useSubjects();
+  const SUBJECTS: string[] = ['All', ...folderSubjects];
+  const getSubjectName = (subj: string) => subjectDisplayName(subj, t);
   const getGradeName = (grd?: string) => t(gradeLabelKey(grd));
 
   const filteredExams = useMemo(() => {
     return exams.filter(exam => {
       const matchesSearch = exam.title.toLowerCase().includes(searchQuery.toLowerCase());
-      const subjectOk = selectedSubject === 'All' || matchesSubject(exam.subject, selectedSubject);
+      // Folders are mutually exclusive: choosing "General" shows the papers
+      // that belong to no other folder, never a second copy of everything.
+      const subjectOk =
+        selectedSubject === 'All' || folderForSubject(exam.subject, folderSubjects) === selectedSubject;
       return matchesSearch && subjectOk;
     });
-  }, [exams, searchQuery, selectedSubject]);
+  }, [exams, searchQuery, selectedSubject, folderSubjects]);
 
   const handleRenameExam = (exam: Exam) => {
     setRenamingExam(exam);
@@ -232,7 +259,6 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
   const handleMoveExam = (exam: any) => {
     setMovingExam(exam);
     setNewSubject(exam.subject);
-    setNewGrade(exam.grade || 'General');
   };
 
   const confirmRename = async () => {
@@ -241,16 +267,25 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
     const updatedTitle = newTitle.trim();
     const path = `exams/${renamingExam.id}`;
     try {
-      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !renamingExam.id.startsWith('local_')) {
-        await updateDoc(doc(db, 'exams', renamingExam.id), {
-          title: updatedTitle
-        });
-      }
+      // The device copy is the source of truth for what the student just did;
+      // it is written first so an unreachable backend cannot swallow the edit.
       const cached = await offlineStorage.getExamById(renamingExam.id);
       if (cached) {
-        await offlineStorage.saveExam({ ...cached, title: updatedTitle });
+        await runWithTimeout(
+          () => offlineStorage.saveExam({ ...cached, title: updatedTitle }),
+          LOCAL_WRITE_TIMEOUT_MS,
+          'Rename exam (local)'
+        );
       }
       setExams(prev => prev.map(e => e.id === renamingExam.id ? { ...e, title: updatedTitle } : e));
+      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !renamingExam.id.startsWith('local_')) {
+        const id = renamingExam.id;
+        void runWithTimeout(
+          () => updateDoc(doc(db, 'exams', id), { title: updatedTitle }),
+          CLOUD_WRITE_TIMEOUT_MS,
+          'Rename exam (cloud)'
+        );
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
     } finally {
@@ -260,21 +295,28 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
   };
 
   const confirmMove = async () => {
-    if (!movingExam || !newSubject || !newGrade) return;
+    if (!movingExam || !newSubject) return;
     setIsUpdating(true);
     const path = `exams/${movingExam.id}`;
+    const movingId = movingExam.id;
+    const targetSubject = newSubject;
     try {
-      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !movingExam.id.startsWith('local_')) {
-        await updateDoc(doc(db, 'exams', movingExam.id), {
-          subject: newSubject,
-          grade: newGrade
-        });
-      }
-      const cached = await offlineStorage.getExamById(movingExam.id);
+      const cached = await offlineStorage.getExamById(movingId);
       if (cached) {
-        await offlineStorage.saveExam({ ...cached, subject: newSubject, grade: newGrade });
+        await runWithTimeout(
+          () => offlineStorage.saveExam({ ...cached, subject: targetSubject }),
+          LOCAL_WRITE_TIMEOUT_MS,
+          'Move exam (local)'
+        );
       }
-      setExams(prev => prev.map(e => e.id === movingExam.id ? { ...e, subject: newSubject, grade: newGrade } : e));
+      setExams(prev => prev.map(e => e.id === movingId ? { ...e, subject: targetSubject } : e));
+      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !movingId.startsWith('local_')) {
+        void runWithTimeout(
+          () => updateDoc(doc(db, 'exams', movingId), { subject: targetSubject }),
+          CLOUD_WRITE_TIMEOUT_MS,
+          'Move exam (cloud)'
+        );
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
     } finally {
@@ -287,18 +329,21 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
     if (!deletingExamId) return;
     setIsDeleting(true);
     const path = `exams/${deletingExamId}`;
+    const targetId = deletingExamId;
     try {
-      try {
-        await offlineStorage.deleteExam(deletingExamId);
-      } catch (offErr) {
-        console.warn("Could not delete from offline storage:", offErr);
-      }
+      // Remove it from the device first so the click always takes effect.
+      await runWithTimeout(
+        () => offlineStorage.deleteExam(targetId),
+        LOCAL_WRITE_TIMEOUT_MS,
+        'Delete exam (local)'
+      );
+      setExams(prev => prev.filter(e => e.id !== targetId));
 
-      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !deletingExamId.startsWith('local_')) {
+      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !targetId.startsWith('local_')) {
         try {
           const sessionsQuery = query(
             collection(db, 'user_exams'),
-            where('examId', '==', deletingExamId),
+            where('examId', '==', targetId),
             where('userId', '==', currentUser.uid)
           );
           const sessionsSnapshot = await getDocs(sessionsQuery);
@@ -307,9 +352,12 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
         } catch (sessionErr) {
           console.warn("User sessions cleanup notice:", sessionErr);
         }
-        await deleteDoc(doc(db, 'exams', deletingExamId));
+        await runWithTimeout(
+          () => deleteDoc(doc(db, 'exams', targetId)),
+          CLOUD_WRITE_TIMEOUT_MS,
+          'Delete exam (cloud)'
+        );
       }
-      setExams(prev => prev.filter(e => e.id !== deletingExamId));
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
     } finally {
@@ -404,13 +452,23 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
           <div className="flex flex-col md:flex-row gap-4 items-center justify-between mb-8">
             <div className="relative w-full md:max-w-md">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-secondary)]" />
-              <input 
+              <input
                 type="text"
                 placeholder={t('searchYourExams')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl py-3.5 pl-12 pr-6 text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:border-[#8AB4F8] transition-all text-sm"
+                className="w-full bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl py-3.5 pl-12 pr-11 text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:border-[#8AB4F8] transition-all text-sm"
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  aria-label={t('clearSearch')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/10 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
             </div>
             <div className="relative w-full md:w-auto">
               <button 
@@ -423,9 +481,6 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
                 <Upload className="w-4 h-4" />
                 {t('uploadNewExam')}
               </button>
-              <div className="absolute -top-3 -right-2 bg-[#F6A8B6] text-gray-900 text-[9px] uppercase tracking-wider font-extrabold px-2 py-0.5 rounded-full shadow-sm border-2 border-[var(--bg-primary)] z-10">
-                BETA
-              </div>
             </div>
           </div>
 
@@ -448,8 +503,21 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
 
           {/* Exam List */}
           {loading ? (
-            <div className="flex items-center justify-center py-20">
-              <Loader2 className="w-8 h-8 text-[#8AB4F8] animate-spin" />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" aria-busy="true">
+              {[0, 1, 2].map((index) => (
+                <div
+                  key={index}
+                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-3xl p-6 animate-pulse"
+                >
+                  <div className="flex items-start justify-between mb-6">
+                    <div className="w-11 h-11 rounded-2xl bg-white/5" />
+                    <div className="w-16 h-5 rounded-full bg-white/5" />
+                  </div>
+                  <div className="h-4 w-3/4 rounded bg-white/5 mb-2.5" />
+                  <div className="h-3 w-1/2 rounded bg-white/5 mb-6" />
+                  <div className="h-9 w-24 rounded-xl bg-white/5" />
+                </div>
+              ))}
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -496,19 +564,21 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
                         </div>
                       </div>
 
-                      <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2 line-clamp-1">{exam.title}</h3>
-                      <p className="text-sm text-[var(--text-secondary)] mb-6 uppercase tracking-widest font-bold">
-                        {getSubjectName(exam.subject)} {exam.grade && exam.grade !== 'General' && `• ${getGradeName(exam.grade)}`}
+                      <h3 className="text-lg font-bold text-[var(--text-primary)] mb-1.5 line-clamp-2 leading-snug">{exam.title}</h3>
+                      <p className="text-[11px] text-[var(--text-secondary)] mb-4 uppercase tracking-widest font-bold">
+                        {getSubjectName(exam.subject)}
+                        {exam.grade && exam.grade !== 'General' && ` • ${getGradeName(exam.grade)}`}
+                        {` • ${t('questionCountLabel', { count: exam.questions?.length || 0 })}`}
                       </p>
 
-                      <div className="flex items-center justify-between pt-6 border-t border-white/5">
+                      <div className="flex items-center justify-between pt-5 border-t border-white/5 gap-3">
                         <div className="flex flex-col">
                           <span className="text-[10px] text-[var(--text-secondary)] uppercase tracking-widest mb-1">{t('status')}</span>
                           {latestSession ? (
                             <span className={`text-[10px] font-bold uppercase tracking-widest ${
-                              latestSession.status === 'COMPLETED' ? 'text-green-400' : 'text-yellow-400'
+                              latestSession.status === 'COMPLETED' ? 'text-emerald-400' : 'text-amber-400'
                             }`}>
-                              {latestSession.status.replace('_', ' ')}
+                              {latestSession.status === 'COMPLETED' ? t('statusCompleted') : t('statusInProgress')}
                             </span>
                           ) : (
                             <span className="text-[10px] text-[var(--text-secondary)] uppercase tracking-widest">{t('newStatus')}</span>
@@ -573,7 +643,7 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
       {/* Modals */}
       <AnimatePresence>
         {deletingExamId && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center px-4 overflow-y-auto">
+          <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center px-4 overflow-y-auto">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDeletingExamId(null)} className="fixed inset-0 bg-black/80 backdrop-blur-sm" />
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-[var(--bg-secondary)] border border-[var(--border-color)] p-6 sm:p-8 rounded-[32px] max-w-sm w-full shadow-2xl my-auto max-h-[85vh] overflow-y-auto">
               <div className="bg-red-400/10 w-12 h-12 rounded-2xl flex items-center justify-center mb-6">
@@ -592,7 +662,7 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
         )}
 
         {renamingExam && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center px-4 overflow-y-auto">
+          <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center px-4 overflow-y-auto">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setRenamingExam(null)} className="fixed inset-0 bg-black/80 backdrop-blur-sm" />
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-[var(--bg-secondary)] border border-[var(--border-color)] p-6 sm:p-8 rounded-[32px] max-w-md w-full shadow-2xl my-auto max-h-[85vh] overflow-y-auto">
               <div className="bg-[#8AB4F8]/10 w-12 h-12 rounded-2xl flex items-center justify-center mb-6">
@@ -612,18 +682,18 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
         )}
 
         {movingExam && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center px-4 overflow-y-auto">
+          <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center px-4 overflow-y-auto">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setMovingExam(null)} className="fixed inset-0 bg-black/80 backdrop-blur-sm" />
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-[var(--bg-secondary)] border border-[var(--border-color)] p-6 sm:p-8 rounded-[32px] max-w-md w-full shadow-2xl my-auto max-h-[85vh] overflow-y-auto">
               <div className="bg-[#8AB4F8]/10 w-12 h-12 rounded-2xl flex items-center justify-center mb-6">
                 <FolderOpen className="w-6 h-6 text-[#8AB4F8]" />
               </div>
               <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('moveExamTitle')}</h3>
-              <p className="text-[var(--text-secondary)] mb-6">Select a new folder for "{movingExam.title}".</p>
+              <p className="text-[var(--text-secondary)] mb-6">{t('selectNewFolder')} — "{movingExam.title}"</p>
               
               <div className="space-y-6 mb-8">
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3 block">1. Select Subject</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3 block">{t('subjectLabel')}</label>
                   <div className="grid grid-cols-2 gap-2">
                     {SUBJECTS.filter(s => s !== 'All').map(subject => (
                       <button
@@ -635,35 +705,17 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
                             : 'bg-[var(--bg-accent)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-gray-600'
                         }`}
                       >
-                        {subject}
+                        {getSubjectName(subject)}
                       </button>
                     ))}
                   </div>
                 </div>
 
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3 block">2. Select Grade</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {GRADES.map(grade => (
-                      <button
-                        key={grade}
-                        onClick={() => setNewGrade(grade)}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
-                          newGrade === grade 
-                            ? 'bg-[#8AB4F8] text-gray-900 border-[#8AB4F8]' 
-                            : 'bg-[var(--bg-accent)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-gray-600'
-                        }`}
-                      >
-                        {grade}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
+                              </div>
 
               <div className="flex gap-3">
                 <button onClick={() => setMovingExam(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
-                <button onClick={confirmMove} disabled={isUpdating || !newSubject || !newGrade} className="flex-1 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+                <button onClick={confirmMove} disabled={isUpdating || !newSubject} className="flex-1 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
                   {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : t('move')}
                 </button>
               </div>
@@ -681,6 +733,7 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
           onProcessText={onProcessText}
           onImportExam={onImportExam}
           isParsing={isParsing}
+          defaultTab={uploadModalDefaultTab}
         />
       )}
     </div>

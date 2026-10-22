@@ -452,7 +452,9 @@ export function examToJsonString(exam: ExportableExam): string {
     questions: (exam.questions || []).map((question, index) => ({
       id: question.id || `q-${index + 1}`,
       ...(question.section ? { section: question.section } : {}),
+      ...(question.instruction ? { instruction: question.instruction } : {}),
       ...(question.passage ? { passage: question.passage } : {}),
+      ...(question.context ? { context: question.context } : {}),
       question: question.question,
       options: question.options,
       ...(question.correctAnswerIndex >= 0 && question.correctAnswerIndex < question.options.length

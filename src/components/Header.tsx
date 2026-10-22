@@ -15,10 +15,12 @@ import {
   Minimize,
   Smartphone,
   Mail,
+  Loader2,
   Home,
   FolderOpen,
 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
+import GoogleIcon from './GoogleIcon';
 import { useOffline } from '../contexts/OfflineContext';
 import { Language } from '../i18n/translations';
 
@@ -31,6 +33,8 @@ interface HeaderProps {
   isDarkMode: boolean;
   toggleTheme: () => void;
   onSignIn?: () => void;
+  /** Google sign-in from the account panel; falls back to onSignIn if absent. */
+  onGoogleSignIn?: () => Promise<void>;
   /** Guests can own exams too, so the tabs are not tied to a signed-in user. */
   showNav?: boolean;
 }
@@ -58,6 +62,7 @@ export default function Header({
   isDarkMode,
   toggleTheme,
   onSignIn,
+  onGoogleSignIn,
   showNav,
 }: HeaderProps) {
   const { language, setLanguage, t } = useLanguage();
@@ -65,6 +70,8 @@ export default function Header({
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [isInstalled, setIsInstalled] = useState(isStandaloneApp);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [googleError, setGoogleError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -107,6 +114,24 @@ export default function Header({
     }
   };
 
+  const handleGoogleSignIn = async () => {
+    if (!onGoogleSignIn) {
+      onSignIn?.();
+      return;
+    }
+    if (isGoogleLoading) return;
+    setGoogleError(null);
+    setIsGoogleLoading(true);
+    try {
+      await onGoogleSignIn();
+      setIsMenuOpen(false);
+    } catch (err: any) {
+      setGoogleError(err?.message || t('signInFailed'));
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
+
   const handleInstall = async () => {
     const accepted = await promptInstall();
     if (accepted) {
@@ -139,6 +164,7 @@ export default function Header({
 
   const userName = currentUser?.name || currentUser?.displayName || t('guest');
   const userEmail = currentUser?.email || null;
+  const userPhoto = currentUser?.photoURL || null;
   const showInstallRow = !isInstalled;
 
   const rowClass =
@@ -195,8 +221,17 @@ export default function Header({
             aria-haspopup="menu"
             aria-expanded={isMenuOpen}
           >
-            <div className="w-7 h-7 rounded-full bg-[#8AB4F8]/20 text-[#8AB4F8] flex items-center justify-center font-bold text-xs shrink-0">
-              <UserIcon className="w-3.5 h-3.5" />
+            <div className="w-7 h-7 rounded-full bg-[#8AB4F8]/20 text-[#8AB4F8] flex items-center justify-center font-bold text-xs shrink-0 overflow-hidden">
+              {userPhoto ? (
+                <img
+                  src={userPhoto}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <UserIcon className="w-3.5 h-3.5" />
+              )}
             </div>
             <span className="text-xs font-bold truncate max-w-[80px] sm:max-w-[140px]">
               {userName}
@@ -329,17 +364,38 @@ export default function Header({
                     <span>{t('signOut')}</span>
                   </button>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsMenuOpen(false);
-                      onSignIn?.();
-                    }}
-                    className="w-full px-3 py-2 rounded-xl bg-[var(--bg-primary)] hover:bg-[var(--bg-accent)] text-[var(--text-primary)] border border-[var(--border-color)] transition-all flex items-center justify-center gap-2 text-xs font-bold shadow-xs cursor-pointer"
-                  >
-                    <LogIn className="w-3.5 h-3.5 text-[#8AB4F8]" />
-                    <span>{t('signIn')}</span>
-                  </button>
+                  <div className="space-y-2">
+                    {googleError && (
+                      <p className="text-[10px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg p-2 leading-relaxed text-left">
+                        {googleError}
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleGoogleSignIn}
+                      disabled={isGoogleLoading}
+                      aria-busy={isGoogleLoading}
+                      className="w-full px-3 py-2 rounded-xl bg-white hover:bg-gray-50 text-gray-800 border border-gray-300 transition-all flex items-center justify-center gap-2 text-xs font-bold shadow-xs disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {isGoogleLoading ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-500" />
+                      ) : (
+                        <GoogleIcon className="w-3.5 h-3.5" />
+                      )}
+                      <span>{t('googleSignIn')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onSignIn?.();
+                      }}
+                      className="w-full px-3 py-2 rounded-xl bg-[var(--bg-primary)] hover:bg-[var(--bg-accent)] text-[var(--text-primary)] border border-[var(--border-color)] transition-all flex items-center justify-center gap-2 text-xs font-bold shadow-xs cursor-pointer"
+                    >
+                      <LogIn className="w-3.5 h-3.5 text-[#8AB4F8]" />
+                      <span>{t('signInWithEmail')}</span>
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

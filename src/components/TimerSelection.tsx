@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, type FormEvent } from 'react';
-import { Timer, ChevronRight, Save, Check, LogIn, Lock, AlertCircle, X } from 'lucide-react';
+import { Timer, ChevronRight, Save, Check, LogIn, Lock, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { formatDuration } from '../lib/time';
@@ -163,9 +163,7 @@ export default function TimerSelection({ onSelect, currentUser, onSignIn, recomm
               )}
             </div>
             <p className="text-xs text-[var(--text-secondary)] mb-4 leading-relaxed">
-              {currentUser 
-                ? "Your answers and session history will be saved to your cloud account so you can review anytime." 
-                : t('saveProgressDesc')}
+              {currentUser ? t('saveProgressCloudDesc') : t('saveProgressDesc')}
             </p>
             
             <div className="flex gap-2 relative">
