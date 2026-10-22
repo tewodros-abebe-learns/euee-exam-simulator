@@ -12,6 +12,7 @@ import FolderManager from './FolderManager';
 import ExportExamButton from './ExportExamButton';
 import type { ImportedExam } from '../lib/examSchema';
 
+import { forgetActiveExam } from '../lib/activeExamState';
 import { offlineStorage } from '../lib/offlineStorage';
 import { gradeLabelKey, subjectDisplayName } from '../lib/subjects';
 import { useSubjects, folderForSubject } from '../lib/subjectStore';
@@ -491,11 +492,18 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
     const targetId = deletingExamId;
     try {
       // Remove it from the device first so the click always takes effect.
+      // The cascade also clears this exam's attempts, which would otherwise
+      // stay in the database forever as unreachable rows.
       await runWithTimeout(
-        () => offlineStorage.deleteExam(targetId),
+        () => offlineStorage.deleteExamCascade(targetId),
         LOCAL_WRITE_TIMEOUT_MS,
         'Delete exam (local)'
       );
+      // Any unsent work for this paper dies with it, otherwise the attempt's
+      // queued save would upload an orphaned result on the next reconnect.
+      await offlineStorage.clearSyncQueueForExam(targetId).catch(() => {});
+      // A deleted paper must not come back on the next refresh.
+      forgetActiveExam(targetId);
       setExams(prev => prev.filter(e => e.id !== targetId));
       const cloudEligible = canWriteCloud(targetId);
       if (cloudEligible) queueExamDelete(targetId);

@@ -220,9 +220,12 @@ export default function ExamInterface({
     }
   }, [currentIndex]);
 
-  // With progress saving OFF the attempt genuinely cannot be resumed, so an
-  // accidental refresh or closed tab would silently destroy every answer. The
-  // browser's own "leave site?" prompt is the only honest warning available.
+  // Leaving mid-exam is only dangerous when progress is NOT saved: then a
+  // refresh or a closed tab really does destroy every answer, and the browser's
+  // own "leave site?" prompt is the only honest warning available. A saved exam
+  // can be resumed, so it is never nagged about.
+  // (There used to be a second, unconditional handler here; the two together
+  // warned even when the answers were safely stored.)
   useEffect(() => {
     if (saveProgress) return;
     const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
@@ -349,17 +352,6 @@ export default function ExamInterface({
       return next;
     });
   };
-
-  // Warn before leaving/refreshing mid-exam so answers are not lost silently
-  useEffect(() => {
-    if (hasSubmittedRef.current) return;
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
 
   const [showBlockDirections, setShowBlockDirections] = useState(false);
 

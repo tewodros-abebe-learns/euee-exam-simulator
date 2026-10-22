@@ -28,13 +28,19 @@ import { ensureSubjectFolder } from './lib/subjectStore';
 import { getCorrectAnswer } from './lib/scoring';
 import { suggestTitleFromFileName, type ImportedExam } from './lib/examSchema';
 import { getExamProgressKey, ACTIVE_EXAM_STATE_KEY } from './lib/examProgress';
+import { safeGetItem, safeSetItem, safeRemoveItem } from './lib/safeStorage';
 import {
-  readActiveExamState,
+  readActiveExamStateFromDevice,
   sanitizeQuestions,
   fitsInStorage,
   type ActiveExamState,
 } from './lib/activeExamState';
 type View = 'DASHBOARD' | 'UPLOAD' | 'TIMER_SELECTION' | 'EXAM' | 'SUMMARY';
+
+/** Firestore document ids must match the rules' isValidId() to be addressable. */
+function isSafeDocumentId(id: unknown): id is string {
+  return typeof id === 'string' && id.length > 0 && id.length <= 128 && /^[a-zA-Z0-9_-]+$/.test(id);
+}
 type Tab = 'HOME' | 'MY_EXAM';
 
 function AppContent() {
@@ -51,7 +57,7 @@ function AppContent() {
   const [saveProgress, setSaveProgress] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(() => {
     if (typeof window === 'undefined') return true;
-    const savedTheme = localStorage.getItem('euee_theme');
+    const savedTheme = safeGetItem('euee_theme');
     if (savedTheme === 'light') return false;
     if (savedTheme === 'dark') return true;
     return !window.matchMedia?.('(prefers-color-scheme: light)').matches;
@@ -65,12 +71,12 @@ function AppContent() {
   const { currentUser, logout, loginWithGoogle, isInitializing: authLoading, isFirebaseAuthed } = useAuth();
   const { saveExamLocally, saveSessionLocally, queueExamForSync, isOnline } = useOffline();
 
-  const [isGuestMode, setIsGuestMode] = useState(() => localStorage.getItem('onboarded') === 'true');
+  const [isGuestMode, setIsGuestMode] = useState(() => safeGetItem('onboarded') === 'true');
   const { t } = useLanguage();
   const [showOnboarding, setShowOnboarding] = useState(() => {
     if (typeof window === 'undefined') return false;
-    const isCompleted = localStorage.getItem('euee_initial_setup_completed');
-    const isOnboarded = localStorage.getItem('onboarded');
+    const isCompleted = safeGetItem('euee_initial_setup_completed');
+    const isOnboarded = safeGetItem('onboarded');
     return !isCompleted && !isOnboarded;
   });
 
@@ -80,30 +86,30 @@ function AppContent() {
       // Signing in (by any method, including Google) ends guest mode, so the
       // dashboard is no longer limited to device-only data.
       setIsGuestMode(false);
-      localStorage.setItem('euee_initial_setup_completed', 'true');
-      localStorage.setItem('onboarded', 'true');
+      safeSetItem('euee_initial_setup_completed', 'true');
+      safeSetItem('onboarded', 'true');
     }
   }, [currentUser]);
 
   const handleGuestModeFromOnboarding = () => {
-    localStorage.setItem('euee_initial_setup_completed', 'true');
-    localStorage.setItem('onboarded', 'true');
+    safeSetItem('euee_initial_setup_completed', 'true');
+    safeSetItem('onboarded', 'true');
     setIsGuestMode(true);
     setShowOnboarding(false);
     setView('DASHBOARD');
   };
 
   const handleSignInFromOnboarding = () => {
-    localStorage.setItem('euee_initial_setup_completed', 'true');
-    localStorage.setItem('onboarded', 'true');
+    safeSetItem('euee_initial_setup_completed', 'true');
+    safeSetItem('onboarded', 'true');
     setShowOnboarding(false);
     setIsGuestMode(false);
     setView('UPLOAD'); // Will go back to auth/landing
   };
 
   const handleDismissOnboarding = () => {
-    localStorage.setItem('euee_initial_setup_completed', 'true');
-    localStorage.setItem('onboarded', 'true');
+    safeSetItem('euee_initial_setup_completed', 'true');
+    safeSetItem('onboarded', 'true');
     setShowOnboarding(false);
   };
 
@@ -130,7 +136,7 @@ function AppContent() {
       document.documentElement.classList.add('light-mode');
     }
     try {
-      localStorage.setItem('euee_theme', isDarkMode ? 'dark' : 'light');
+      safeSetItem('euee_theme', isDarkMode ? 'dark' : 'light');
     } catch {
       // Private mode / storage disabled — theme simply will not persist.
     }
@@ -159,14 +165,12 @@ function AppContent() {
   // The snapshot is validated first: a corrupt or empty one must never drop the
   // student into an exam screen that has nothing to answer.
   useEffect(() => {
-    const restored = readActiveExamState(typeof window === 'undefined' ? null : window.localStorage);
+    const restored = readActiveExamStateFromDevice();
     if (restored && restored.saveProgress) {
       applyActiveExamState(restored);
     } else {
       // Nothing playable was saved: make sure a stale key cannot linger.
-      try {
-        localStorage.removeItem(ACTIVE_EXAM_STATE_KEY);
-      } catch {}
+      safeRemoveItem(ACTIVE_EXAM_STATE_KEY);
     }
   }, [applyActiveExamState]);
 
@@ -181,7 +185,7 @@ function AppContent() {
   useEffect(() => {
     if (view !== 'EXAM' || examQuestions.length > 0) return;
 
-    const snapshot = readActiveExamState(typeof window === 'undefined' ? null : window.localStorage);
+    const snapshot = readActiveExamStateFromDevice();
     if (snapshot && snapshot.examQuestions.length > 0) {
       applyActiveExamState(snapshot);
       return;
@@ -248,18 +252,14 @@ function AppContent() {
         console.warn('Skipped caching the active exam: the snapshot is too large.');
         return;
       }
-      try {
-        localStorage.setItem(ACTIVE_EXAM_STATE_KEY, JSON.stringify(snapshot));
-      } catch (err) {
-        console.warn('Could not cache active exam state:', err);
+      if (!safeSetItem(ACTIVE_EXAM_STATE_KEY, JSON.stringify(snapshot))) {
+        console.warn('Could not cache active exam state: storage is unavailable or full.');
       }
     } else if (leftExam) {
       // Leaving the exam (finishing OR exiting) ends the "resume on refresh"
       // behaviour. An exited attempt is still resumable from the dashboard,
       // which is where the student expects to find it.
-      try {
-        localStorage.removeItem(ACTIVE_EXAM_STATE_KEY);
-      } catch {}
+      safeRemoveItem(ACTIVE_EXAM_STATE_KEY);
     }
   }, [view, saveProgress, examQuestions, currentExamId, examTitle, selectedSubject, selectedGrade, timeLimit, startTime, currentSessionId]);
 
@@ -281,8 +281,12 @@ function AppContent() {
         for (const exam of guestExams) {
           if (!isMounted) break;
           try {
-            // Upload to Firestore
-            const examRef = doc(collection(db, 'exams'));
+            // A deterministic document id makes this replay-safe: if the app is
+            // closed after the upload but before the local copy is updated, the
+            // next run overwrites the same document instead of uploading a
+            // second copy of the same paper.
+            const cloudId = isSafeDocumentId(exam.id) ? exam.id : null;
+            const examRef = cloudId ? doc(db, 'exams', cloudId) : doc(collection(db, 'exams'));
             await setDoc(examRef, {
               title: exam.title,
               subject: exam.subject,
@@ -291,48 +295,52 @@ function AppContent() {
               createdBy: currentUser.uid,
               createdAt: serverTimestamp()
             });
-            
-            // Delete old guest local exam
-            await offlineStorage.deleteExam(exam.id);
-            
-            // Save new exam locally with Firestore ID
+
+            // Migrate the attempts *before* dropping the old record, so an
+            // interrupted sync can never leave the paper without its results.
+            const sessions = await offlineStorage.getAllSessions();
+            for (const session of sessions) {
+              if (session.examId !== exam.id) continue;
+              const updatedSession = { ...session };
+              updatedSession.examId = examRef.id;
+              if (updatedSession.userId === 'guest' || !updatedSession.userId) {
+                updatedSession.userId = currentUser.uid;
+              }
+              // Same reasoning as above: one attempt, one document, however
+              // many times the restart happens.
+              const sessionId = isSafeDocumentId(session.id) ? session.id : `${examRef.id}_${Date.now()}`;
+              updatedSession.id = sessionId;
+
+              await saveSessionLocally(updatedSession);
+              await setDoc(doc(db, 'user_exams', sessionId), {
+                userId: currentUser.uid,
+                examId: examRef.id,
+                status: updatedSession.status,
+                answers: updatedSession.answers,
+                score: updatedSession.score ?? null,
+                total: updatedSession.total ?? null,
+                percentage: updatedSession.percentage ?? null,
+                startTime: updatedSession.startTime,
+                timeLimit: updatedSession.timeLimit,
+                duration: updatedSession.timeSpent ?? null,
+                lastUpdated: serverTimestamp()
+              });
+              if (session.id !== sessionId) {
+                // The old row is only removed once the new one is stored.
+                await offlineStorage.deleteSession(session.id);
+              }
+            }
+
+            // Save the migrated exam locally under the cloud id, then drop the
+            // guest record. If this save fails the guest copy is still there,
+            // so the paper can never disappear.
             await saveExamLocally({
               ...exam,
               id: examRef.id,
               createdBy: currentUser.uid
             });
-            
-            // Update sessions pointing to old guest exam
-            const sessions = await offlineStorage.getAllSessions();
-            for (const session of sessions) {
-              if (session.examId === exam.id) {
-                 const updatedSession = { ...session };
-                 updatedSession.examId = examRef.id;
-                 if (updatedSession.userId === 'guest' || !updatedSession.userId) {
-                    updatedSession.userId = currentUser.uid;
-                 }
-                 await saveSessionLocally(updatedSession);
-                 
-                 // Push to cloud
-                 const sessionRef = doc(collection(db, 'user_exams'));
-                 await setDoc(sessionRef, {
-                    userId: currentUser.uid,
-                    examId: examRef.id,
-                    status: updatedSession.status,
-                    answers: updatedSession.answers,
-                    score: updatedSession.score ?? null,
-                    total: updatedSession.total ?? null,
-                    percentage: updatedSession.percentage ?? null,
-                    startTime: updatedSession.startTime,
-                    timeLimit: updatedSession.timeLimit,
-                    lastUpdated: serverTimestamp()
-                 });
-                 // Delete old session locally
-                 await offlineStorage.deleteSession(session.id);
-                 // Save the new session with the new ID
-                 updatedSession.id = sessionRef.id;
-                 await saveSessionLocally(updatedSession);
-              }
+            if (exam.id !== examRef.id) {
+              await offlineStorage.deleteExam(exam.id);
             }
           } catch (e) {
              console.warn("Failed syncing guest exam:", e);
@@ -593,9 +601,7 @@ function AppContent() {
     setUserAnswers({});
     setCurrentSessionId(null);
     // Never inherit a previous attempt's snapshots for this paper.
-    try {
-      localStorage.removeItem(getExamProgressKey(currentExamId, examTitle));
-    } catch {}
+    safeRemoveItem(getExamProgressKey(currentExamId, examTitle));
     
     // Persist the exam the user just built if it has no id yet
     if (!currentExamId) {
@@ -693,10 +699,8 @@ function AppContent() {
 
     setCurrentSessionId(newSessionId);
 
-    try {
-      localStorage.removeItem(ACTIVE_EXAM_STATE_KEY);
-      localStorage.removeItem(getExamProgressKey(currentExamId, examTitle));
-    } catch {}
+    safeRemoveItem(ACTIVE_EXAM_STATE_KEY);
+    safeRemoveItem(getExamProgressKey(currentExamId, examTitle));
 
     setView('SUMMARY');
   };
@@ -842,8 +846,8 @@ function AppContent() {
         onLogout={() => {
           logout();
           setIsGuestMode(false);
-          localStorage.removeItem('onboarded');
-          localStorage.removeItem('euee_initial_setup_completed');
+          safeRemoveItem('onboarded');
+          safeRemoveItem('euee_initial_setup_completed');
           setView('UPLOAD');
         }}
         onDashboard={() => setView('DASHBOARD')}

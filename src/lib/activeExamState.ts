@@ -11,7 +11,7 @@
  */
 
 import type { Question } from '../services/geminiService';
-import { ACTIVE_EXAM_STATE_KEY } from './examProgress';
+import { ACTIVE_EXAM_STATE_KEY, getExamProgressKey } from './examProgress';
 
 export interface ActiveExamState {
   examQuestions: Question[];
@@ -100,6 +100,52 @@ export function readActiveExamState(storage: Storage | null | undefined): Active
   } catch {
     // Storage can be unavailable (private mode, sandboxed frame).
     return null;
+  }
+}
+
+/**
+ * Reads the snapshot from this device.
+ *
+ * `window.localStorage` itself can throw when storage is blocked, so the
+ * property access is guarded here rather than at every call site.
+ */
+export function readActiveExamStateFromDevice(): ActiveExamState | null {
+  let storage: Storage | null = null;
+  try {
+    storage = typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    storage = null;
+  }
+  return readActiveExamState(storage);
+}
+
+/**
+ * Forgets the in-progress attempt of one exam.
+ *
+ * Called when a paper is deleted: leaving the snapshot behind meant a later
+ * refresh happily restored an exam the student had already thrown away, and the
+ * per-exam progress key stayed in storage forever.
+ */
+export function forgetActiveExam(examId: string | null | undefined): void {
+  if (!examId) return;
+  let storage: Storage | null = null;
+  try {
+    storage = typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    return;
+  }
+  if (!storage) return;
+
+  try {
+    const snapshot = readActiveExamState(storage);
+    if (snapshot?.currentExamId === examId) storage.removeItem(ACTIVE_EXAM_STATE_KEY);
+  } catch {
+    // Unreadable snapshot: the validator will ignore it anyway.
+  }
+  try {
+    storage.removeItem(getExamProgressKey(examId, null));
+  } catch {
+    // Storage unavailable; nothing to clean.
   }
 }
 

@@ -51,27 +51,57 @@ export function checkRateLimit(ip: string): boolean {
 interface CachedExam {
   data: any;
   createdAt: number;
+  /** Approximate size, so the cache is bounded by memory and not only by count. */
+  size: number;
 }
 const examCache = new Map<string, CachedExam>();
 const CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 const MAX_CACHE_ENTRIES = 100;
+// A full 100-entry cache of large papers used to be able to hold hundreds of
+// megabytes, which is an out-of-memory crash on a small container. The count
+// limit alone was not a real bound.
+const MAX_CACHE_CHARS = 8_000_000;
+let cachedChars = 0;
+
+function estimateSize(data: any): number {
+  try {
+    return JSON.stringify(data)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+function dropEntry(hash: string) {
+  const entry = examCache.get(hash);
+  if (!entry) return;
+  cachedChars -= entry.size;
+  examCache.delete(hash);
+}
 
 export function getCachedExam(hash: string): any | null {
   const entry = examCache.get(hash);
   if (!entry) return null;
   if (Date.now() - entry.createdAt > CACHE_TTL_MS) {
-    examCache.delete(hash);
+    dropEntry(hash);
     return null;
   }
   return entry.data;
 }
 
 export function setCachedExam(hash: string, data: any) {
-  if (examCache.size >= MAX_CACHE_ENTRIES) {
+  const size = estimateSize(data);
+  if (size > MAX_CACHE_CHARS) return; // never worth caching on its own
+
+  dropEntry(hash);
+  // Evict oldest entries until both the count and the memory budget fit.
+  while (examCache.size > 0 && (examCache.size >= MAX_CACHE_ENTRIES || cachedChars + size > MAX_CACHE_CHARS)) {
     const oldestKey = examCache.keys().next().value;
-    if (oldestKey) examCache.delete(oldestKey);
+    if (!oldestKey) break;
+    dropEntry(oldestKey);
   }
-  examCache.set(hash, { data, createdAt: Date.now() });
+
+  examCache.set(hash, { data, createdAt: Date.now(), size });
+  cachedChars += size;
 }
 
 export type ExamRequestBody = ExamRequest;
