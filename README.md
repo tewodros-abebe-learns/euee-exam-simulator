@@ -71,8 +71,18 @@ The **EUEE & National Exam Prep Platform** is designed to empower Ethiopian stud
 
 ## 🔐 Enabling Google Sign-In
 
-The app ships the button and the whole flow, but Google sign-in only works once
+The app is wired to the Firebase project **`gen-lang-client-0826296814`**
+(configured in `firebase-applet-config.json`; `VITE_FIREBASE_*` env vars
+override it). It uses the project's **default** Firestore database, so no
+named database is required.
+
+The app ships the Google button and the whole flow, but sign-in only works once
 the Firebase project allows it:
+
+0. **Firestore Database → Create database** → Standard edition → pick a region →
+   production mode. Then **Firestore → Rules**, paste `firestore.rules`,
+   **Publish**. Without a database, auth still works but nothing is saved to the
+   cloud (the app falls back to on-device storage).
 
 1. Firebase console → **Authentication** → **Sign-in method** → enable **Google**
    (set the public-facing project name and support email).
@@ -80,8 +90,10 @@ the Firebase project allows it:
    the app is served from (`localhost` is present by default, the
    `*.firebaseapp.com` domain too). `vercel.app` preview domains must be added
    explicitly, otherwise Google returns `auth/unauthorized-domain`.
-3. Nothing is stored in env vars: the OAuth web client id already lives in
-   `firebase-applet-config.json`, and the browser only sees the public config.
+3. No secrets are involved: the web config in `firebase-applet-config.json` is
+   public (it ships in the browser bundle), so it is safe to commit. Never put
+   `VITE_FIREBASE_*` values that belong to a different project than the one
+   holding your Firestore rules.
 
 How it behaves:
 

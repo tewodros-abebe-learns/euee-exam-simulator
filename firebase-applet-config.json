@@ -1,12 +1,12 @@
 {
-  "projectId": "isometric-oarlock-2ds98",
-  "appId": "1:830948478629:web:97b38286beec93c67d074c",
-  "apiKey": "AIzaSyBlIixuMgt2nsf6iPIK-gC3O7Tngh1dBSE",
-  "authDomain": "isometric-oarlock-2ds98.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-finaleuee-e4ca6dad-c459-48d9-a986-ab16d705acbb",
-  "storageBucket": "isometric-oarlock-2ds98.firebasestorage.app",
-  "messagingSenderId": "830948478629",
+  "projectId": "gen-lang-client-0826296814",
+  "appId": "1:1047356765660:web:61182ebf96bc9f0af0cb19",
+  "apiKey": "AIzaSyBMakFqM99hZdGLsGz6bXedVBCk3u8Qi-E",
+  "authDomain": "gen-lang-client-0826296814.firebaseapp.com",
+  "firestoreDatabaseId": "",
+  "storageBucket": "gen-lang-client-0826296814.firebasestorage.app",
+  "messagingSenderId": "1047356765660",
   "measurementId": "",
-  "oAuthClientId": "830948478629-bt3im44bmch62l0rnrvei9j8qibbsf7e.apps.googleusercontent.com",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }
