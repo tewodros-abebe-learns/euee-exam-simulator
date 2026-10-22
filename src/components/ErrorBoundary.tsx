@@ -1,6 +1,7 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertCircle, RefreshCcw, Home } from 'lucide-react';
 import { translations, type Language } from '../i18n/translations';
+import { readCrashStreak, recordCrash, resetToSafestEntrance } from '../lib/shellLocation';
 
 /**
  * The boundary sits above the language provider, so it cannot use `useLanguage`.
@@ -43,8 +44,26 @@ export default class ErrorBoundary extends Component<Props, State> {
     console.error('Uncaught error:', error, errorInfo);
   }
 
+  /**
+   * Reloading is the usual fix and it now lands the student back on the tab
+   * they were using (the tab is remembered by the shell, the exam screen is
+   * restored from its own snapshot) instead of starting over on Home.
+   *
+   * If the page has already crashed twice without a clean render in between,
+   * the reload would only repeat the same failure, so the remembered location
+   * and the in-progress exam snapshot are dropped first: the student lands on
+   * Home with the library intact rather than in a reload loop.
+   */
+  private handleReload = () => {
+    const alreadyCrashedSinceMount = readCrashStreak() >= 1;
+    recordCrash();
+    if (alreadyCrashedSinceMount) resetToSafestEntrance();
+    window.location.reload();
+  };
+
+  /** "Home" is an explicit request to go home, so nothing is restored after it. */
   private handleReset = () => {
-    this.setState({ hasError: false, error: null });
+    resetToSafestEntrance();
     window.location.href = '/';
   };
 
@@ -88,7 +107,7 @@ export default class ErrorBoundary extends Component<Props, State> {
 
             <div className="flex flex-col gap-3">
               <button
-                onClick={() => window.location.reload()}
+                onClick={this.handleReload}
                 className="w-full bg-[#8AB4F8] text-gray-900 py-4 rounded-2xl font-bold hover:bg-[#AECBFA] transition-all shadow-lg shadow-[#8AB4F8]/20 flex items-center justify-center gap-2"
               >
                 <RefreshCcw className="w-4 h-4" />

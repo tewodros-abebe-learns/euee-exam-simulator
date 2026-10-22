@@ -184,8 +184,6 @@ export default function ExamUploadModal({
     else if (nextOption.route === 'ai') setTab('upload');
   };
 
-  if (!isOpen) return null;
-
   const resetPreview = () => {
     setPreview(null);
     setPreviewTitle('');
@@ -460,6 +458,13 @@ export default function ExamUploadModal({
   const primaryButton = `${footerButton} bg-[#8AB4F8] text-gray-900 hover:bg-[#AECBFA] shadow-md flex items-center justify-center gap-2`;
   const secondaryButton = `${footerButton} bg-white/5 border border-[var(--border-color)] text-[var(--text-primary)] hover:bg-white/10 flex items-center justify-center gap-2`;
   const ghostButton = `${footerButton} text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/5`;
+
+  // Returning early is only safe here, after every hook has run. Placing this
+  // guard above the hooks made a closed dialog render three hooks and an open
+  // one four, which React reports as "Rendered more hooks than during the
+  // previous render" — the crash that took the whole app down on "Upload" and
+  // "Paste questions".
+  if (!isOpen) return null;
 
   return (
     <div

@@ -51,3 +51,34 @@ export async function runWithTimeout(
     if (timer) clearTimeout(timer);
   }
 }
+
+/**
+ * Like `runWithTimeout`, but for a read whose *result* is needed.
+ *
+ * `getExamById` and friends resolve from IndexedDB, which can stall when the
+ * database is blocked, and a Firestore read can wait a long time while the
+ * device is offline. Awaiting either directly left dialogs spinning forever
+ * ("Delete" never finished). This returns the fallback instead of hanging.
+ */
+export async function readWithTimeout<T>(
+  work: () => Promise<T>,
+  fallback: T,
+  timeoutMs: number = LOCAL_WRITE_TIMEOUT_MS,
+  label = 'Background read'
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<T>((resolve) => {
+      timer = setTimeout(() => resolve(fallback), timeoutMs);
+    });
+    const attempt = Promise.resolve()
+      .then(work)
+      .catch((error) => {
+        console.warn(`${label} failed:`, error);
+        return fallback;
+      });
+    return await Promise.race([attempt, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

@@ -11,7 +11,7 @@ import {
 import { offlineStorage, type OfflineExam, type OfflineSession } from '../lib/offlineStorage';
 import { useLanguage } from './LanguageContext';
 import { db, auth } from '../firebase';
-import { runWithTimeout, CLOUD_WRITE_TIMEOUT_MS } from '../lib/cloudWrite';
+import { runWithTimeout, readWithTimeout, LOCAL_WRITE_TIMEOUT_MS, CLOUD_WRITE_TIMEOUT_MS } from '../lib/cloudWrite';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 
 interface BeforeInstallPromptEvent extends Event {
@@ -137,7 +137,13 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
     setIsSyncing(true);
     const syncedSessionIds = new Set<string>();
     try {
-      const queue = await offlineStorage.getSyncQueue();
+      // A blocked database must not leave `isSyncing` stuck on forever.
+      const queue = await readWithTimeout(
+        () => offlineStorage.getSyncQueue(),
+        [],
+        LOCAL_WRITE_TIMEOUT_MS,
+        'Read the replay queue'
+      );
 
       // 3a. Exams created while offline are uploaded under their local id.
       for (const item of queue) {
@@ -180,7 +186,12 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       }
 
       // 3b. Every stored session that still needs mirroring.
-      const sessions = await offlineStorage.getAllSessions(currentAuthUser.uid);
+      const sessions = await readWithTimeout(
+        () => offlineStorage.getAllSessions(currentAuthUser.uid),
+        [],
+        LOCAL_WRITE_TIMEOUT_MS,
+        'Read device attempts for sync'
+      );
       for (const session of sessions) {
         if (session.syncedWithCloud) continue;
         if (session.userId !== currentAuthUser.uid) continue;

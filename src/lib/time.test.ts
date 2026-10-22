@@ -74,3 +74,35 @@ test('heuristic parser extracts a confident exam when options and keys exist', (
   assert.equal(second.correctAnswerIndex, 1);
   assert.ok(!first.options.some((option) => option.startsWith('Option')));
 });
+
+test('timestamps from every source normalise to milliseconds', async () => {
+  const { toMillis } = await import('./time');
+  // Firestore Timestamp
+  assert.equal(toMillis({ toMillis: () => 1234 }), 1234);
+  // Plain seconds-based timestamp shape
+  assert.equal(toMillis({ seconds: 2 }), 2000);
+  // Epoch number and ISO string
+  assert.equal(toMillis(5000), 5000);
+  assert.equal(toMillis('1970-01-01T00:00:06.000Z'), 6000);
+  // Anything unusable must be 0, never NaN: a NaN comparator reorders the list.
+  assert.equal(toMillis(undefined), 0);
+  assert.equal(toMillis(null), 0);
+  assert.equal(toMillis('not a date'), 0);
+  assert.equal(toMillis(Number.NaN), 0);
+  assert.equal(toMillis({ toMillis: () => { throw new Error('boom'); } }), 0);
+});
+
+test('sorting is newest-first and deterministic for equal timestamps', async () => {
+  const { sortByRecency } = await import('./time');
+  const items = [
+    { id: 'b', title: 'Beta', createdAt: 1000 },
+    { id: 'a', title: 'Alpha', createdAt: 1000 },
+    { id: 'c', title: 'Gamma', createdAt: 3000 },
+    { id: 'd', title: 'Delta', createdAt: undefined },
+  ];
+  const sorted = sortByRecency(items, (item) => item.createdAt, (item) => item.title);
+  assert.deepEqual(sorted.map((item) => item.id), ['c', 'a', 'b', 'd']);
+  // Same input in a different order must give the same output.
+  const shuffled = sortByRecency([...items].reverse(), (item) => item.createdAt, (item) => item.title);
+  assert.deepEqual(shuffled.map((item) => item.id), ['c', 'a', 'b', 'd']);
+});

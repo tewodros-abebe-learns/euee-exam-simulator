@@ -217,7 +217,9 @@ export default function ExamInterface({
   useEffect(() => {
     if (!sideOverviewRef.current) return;
     const activeEl = sideOverviewRef.current.querySelector(`[data-overview-idx="${currentIndex}"]`) as HTMLElement;
-    if (activeEl) {
+    // Not every environment implements scrollIntoView (older embedded webviews,
+    // test DOMs). A missing method must never take the exam screen down.
+    if (activeEl && typeof activeEl.scrollIntoView === 'function') {
       activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, [currentIndex]);

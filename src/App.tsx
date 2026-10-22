@@ -11,6 +11,7 @@ import Footer from './components/Footer';
 import TimerSelection from './components/TimerSelection';
 import InitialSetupModal from './components/InitialSetupModal';
 import OfflineBanner from './components/OfflineBanner';
+import SectionBoundary from './components/SectionBoundary';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { runWithTimeout, CRITICAL_WRITE_TIMEOUT_MS, LOCAL_WRITE_TIMEOUT_MS } from './lib/cloudWrite';
 import { prepareExamQuestions } from './lib/examQuality';
@@ -29,6 +30,7 @@ import { getCorrectAnswer } from './lib/scoring';
 import { suggestTitleFromFileName, type ImportedExam } from './lib/examSchema';
 import { getExamProgressKey, ACTIVE_EXAM_STATE_KEY } from './lib/examProgress';
 import { safeGetItem, safeSetItem, safeRemoveItem } from './lib/safeStorage';
+import { clearCrashStreak, readShellTab, saveShellTab } from './lib/shellLocation';
 import {
   readActiveExamStateFromDevice,
   sanitizeQuestions,
@@ -45,7 +47,9 @@ type Tab = 'HOME' | 'MY_EXAM';
 
 function AppContent() {
   const [view, setView] = useState<View>('DASHBOARD');
-  const [activeTab, setActiveTab] = useState<Tab>('HOME');
+  // Starts on the tab the student was on when the page last went away, so the
+  // crash screen's "Reload page" lands back in My Exams instead of Home.
+  const [activeTab, setActiveTab] = useState<Tab>(() => readShellTab());
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
   const [userAnswers, setUserAnswers] = useState<Record<string, string>>({});
   const [examQuestions, setExamQuestions] = useState<Question[]>([]);
@@ -112,6 +116,17 @@ function AppContent() {
     safeSetItem('onboarded', 'true');
     setShowOnboarding(false);
   };
+
+  // Remembering the tab is what makes a reload return to the same screen.
+  useEffect(() => {
+    saveShellTab(activeTab);
+  }, [activeTab]);
+
+  // Reaching a successful render means the crash counter's job is done; the
+  // next crash starts a fresh count.
+  useEffect(() => {
+    clearCrashStreak();
+  }, []);
 
   useEffect(() => {
     if (!authLoading && !currentUser && !isGuestMode) {
@@ -866,131 +881,138 @@ function AppContent() {
       <OfflineBanner />
 
       <main className="flex-1 overflow-x-hidden relative">
-        <AnimatePresence mode="wait">
-          {view === 'UPLOAD' && (!currentUser && !isGuestMode) && (
-            <LandingPage
-              key="landing"
-              onGuestMode={() => {
-                setIsGuestMode(true);
-                setView('DASHBOARD');
-              }}
-            />
-          )}
-
-          {view === 'DASHBOARD' && activeTab === 'HOME' && (currentUser || isGuestMode) && (
-            <Home
-              key="home"
-              onUpload={handleFileUpload}
-              onProcessText={handleTextSubmit}
-              onImportExam={handleImportExam}
-              isParsing={isParsing}
-              onOpenLibrary={() => setActiveTab('MY_EXAM')}
-            />
-          )}
-          
-          {view === 'DASHBOARD' && activeTab === 'MY_EXAM' && (currentUser || isGuestMode) && (
-            <Dashboard 
-              key="dashboard" 
-              onContinue={handleContinueSession} 
-              onRetake={handleSelectExam} 
-              onViewSummary={handleViewSummarySession} 
-              onUpload={handleFileUpload}
-              onProcessText={handleTextSubmit}
-              onImportExam={handleImportExam}
-              isParsing={isParsing}
-            />
-          )}
-
-          {view === 'TIMER_SELECTION' && (
-            <TimerSelection
-              key="timer"
-              onSelect={handleTimerSelection}
-              currentUser={currentUser}
-              recommendedSeconds={recommendedTimeLimit}
-              examTitle={examTitle}
-              onSignIn={() => {
-                setIsGuestMode(false);
-                setView('UPLOAD');
-              }}
-            />
-          )}
-
-          {/* The exam screen only exists when there is something to answer; the
-              effect above recovers or redirects, so no dead end is ever shown. */}
-          {view === 'EXAM' && examQuestions.length > 0 && (
-            <ExamInterface
-              key="exam"
-              questions={examQuestions}
-              timeLimit={timeLimit || 0}
-              examId={currentExamId}
-              onComplete={handleFinishExam}
-              onBack={handleExitExam}
-              saveAnswer={(qId, ans) => setUserAnswers(prev => ({...prev, [qId]: ans}))}
-              initialAnswers={userAnswers}
-              startTime={startTime || Date.now()}
-              examTitle={examTitle}
-              subject={selectedSubject || 'General'}
-              grade={selectedGrade || 'General'}
-              saveProgress={saveProgress}
-              isDarkMode={isDarkMode}
-            />
-          )}
-
-          {view === 'SUMMARY' && (
-            <SummaryPage
-              key="summary"
-              questions={examQuestions}
-              userAnswers={userAnswers}
-              title={examTitle}
-              timeSpentSeconds={lastResult?.duration}
-              onReviewMissed={() => {
-                const source = originalExam?.questions || examQuestions;
-                // Only questions that carry a real answer key can be "missed";
-                // ungraded practice questions must never be drilled as mistakes.
-                const missed = source.filter((q: Question) => {
-                  const correct = getCorrectAnswer(q);
-                  if (correct === undefined) return false;
-                  return userAnswers[q.id] !== correct;
-                });
-                if (missed.length === 0) return;
-                setExamQuestions(missed);
-                setExamTitle(`${examTitle} — ${t('reviewMissed')}`);
-                setUserAnswers(
-                  Object.fromEntries(
-                    Object.entries(userAnswers).filter(([id]) => missed.some((q: Question) => q.id === id))
-                  )
-                );
-                setCurrentExamId(`${currentExamId || 'exam'}_missed_${Date.now()}`);
-                setTimeLimit(null);
-                setRecommendedTimeLimit(null);
-                setStartTime(Date.now());
-                setSaveProgress(false);
-                setLastResult(null);
-                setView('TIMER_SELECTION');
-              }}
-              onRetake={() => {
-                if (originalExam) {
-                  handleSelectExam(originalExam);
-                } else {
+        {/*
+          One broken screen must not take the header, the library and the rest
+          of the app with it. The key resets the boundary on every navigation,
+          so a failure on one screen never sticks.
+        */}
+        <SectionBoundary resetKey={`${view}:${activeTab}`}>
+          <AnimatePresence mode="wait">
+            {view === 'UPLOAD' && (!currentUser && !isGuestMode) && (
+              <LandingPage
+                key="landing"
+                onGuestMode={() => {
+                  setIsGuestMode(true);
                   setView('DASHBOARD');
-                }
-              }}
-              onReset={() => {
-                // Leaving the summary must not leave a stale paper behind: a
-                // later retake would otherwise inherit its id and answers.
-                setOriginalExam(null);
-                setExamQuestions([]);
-                setUserAnswers({});
-                setLastResult(null);
-                setCurrentExamId(null);
-                setCurrentSessionId(null);
-                setTimeLimit(null);
-                setStartTime(null);
-                setView('DASHBOARD');
-              }}
-            />
-          )}
-        </AnimatePresence>
+                }}
+              />
+            )}
+
+            {view === 'DASHBOARD' && activeTab === 'HOME' && (currentUser || isGuestMode) && (
+              <Home
+                key="home"
+                onUpload={handleFileUpload}
+                onProcessText={handleTextSubmit}
+                onImportExam={handleImportExam}
+                isParsing={isParsing}
+                onOpenLibrary={() => setActiveTab('MY_EXAM')}
+              />
+            )}
+          
+            {view === 'DASHBOARD' && activeTab === 'MY_EXAM' && (currentUser || isGuestMode) && (
+              <Dashboard 
+                key="dashboard" 
+                onContinue={handleContinueSession} 
+                onRetake={handleSelectExam} 
+                onViewSummary={handleViewSummarySession} 
+                onUpload={handleFileUpload}
+                onProcessText={handleTextSubmit}
+                onImportExam={handleImportExam}
+                isParsing={isParsing}
+              />
+            )}
+
+            {view === 'TIMER_SELECTION' && (
+              <TimerSelection
+                key="timer"
+                onSelect={handleTimerSelection}
+                currentUser={currentUser}
+                recommendedSeconds={recommendedTimeLimit}
+                examTitle={examTitle}
+                onSignIn={() => {
+                  setIsGuestMode(false);
+                  setView('UPLOAD');
+                }}
+              />
+            )}
+
+            {/* The exam screen only exists when there is something to answer; the
+                effect above recovers or redirects, so no dead end is ever shown. */}
+            {view === 'EXAM' && examQuestions.length > 0 && (
+              <ExamInterface
+                key="exam"
+                questions={examQuestions}
+                timeLimit={timeLimit || 0}
+                examId={currentExamId}
+                onComplete={handleFinishExam}
+                onBack={handleExitExam}
+                saveAnswer={(qId, ans) => setUserAnswers(prev => ({...prev, [qId]: ans}))}
+                initialAnswers={userAnswers}
+                startTime={startTime || Date.now()}
+                examTitle={examTitle}
+                subject={selectedSubject || 'General'}
+                grade={selectedGrade || 'General'}
+                saveProgress={saveProgress}
+                isDarkMode={isDarkMode}
+              />
+            )}
+
+            {view === 'SUMMARY' && (
+              <SummaryPage
+                key="summary"
+                questions={examQuestions}
+                userAnswers={userAnswers}
+                title={examTitle}
+                timeSpentSeconds={lastResult?.duration}
+                onReviewMissed={() => {
+                  const source = originalExam?.questions || examQuestions;
+                  // Only questions that carry a real answer key can be "missed";
+                  // ungraded practice questions must never be drilled as mistakes.
+                  const missed = source.filter((q: Question) => {
+                    const correct = getCorrectAnswer(q);
+                    if (correct === undefined) return false;
+                    return userAnswers[q.id] !== correct;
+                  });
+                  if (missed.length === 0) return;
+                  setExamQuestions(missed);
+                  setExamTitle(`${examTitle} — ${t('reviewMissed')}`);
+                  setUserAnswers(
+                    Object.fromEntries(
+                      Object.entries(userAnswers).filter(([id]) => missed.some((q: Question) => q.id === id))
+                    )
+                  );
+                  setCurrentExamId(`${currentExamId || 'exam'}_missed_${Date.now()}`);
+                  setTimeLimit(null);
+                  setRecommendedTimeLimit(null);
+                  setStartTime(Date.now());
+                  setSaveProgress(false);
+                  setLastResult(null);
+                  setView('TIMER_SELECTION');
+                }}
+                onRetake={() => {
+                  if (originalExam) {
+                    handleSelectExam(originalExam);
+                  } else {
+                    setView('DASHBOARD');
+                  }
+                }}
+                onReset={() => {
+                  // Leaving the summary must not leave a stale paper behind: a
+                  // later retake would otherwise inherit its id and answers.
+                  setOriginalExam(null);
+                  setExamQuestions([]);
+                  setUserAnswers({});
+                  setLastResult(null);
+                  setCurrentExamId(null);
+                  setCurrentSessionId(null);
+                  setTimeLimit(null);
+                  setStartTime(null);
+                  setView('DASHBOARD');
+                }}
+              />
+            )}
+          </AnimatePresence>
+        </SectionBoundary>
 
         <AnimatePresence>
           {errorMessage && (
@@ -1053,14 +1075,16 @@ function AppContent() {
 
         <AnimatePresence>
           {showOnboarding && (
-            <InitialSetupModal
-              isOpen={showOnboarding}
-              isDarkMode={isDarkMode}
-              onSetTheme={(isDark) => setIsDarkMode(isDark)}
-              onContinueAsGuest={handleGuestModeFromOnboarding}
-              onSignIn={handleSignInFromOnboarding}
-              onClose={handleDismissOnboarding}
-            />
+            <SectionBoundary resetKey={showOnboarding}>
+              <InitialSetupModal
+                isOpen={showOnboarding}
+                isDarkMode={isDarkMode}
+                onSetTheme={(isDark) => setIsDarkMode(isDark)}
+                onContinueAsGuest={handleGuestModeFromOnboarding}
+                onSignIn={handleSignInFromOnboarding}
+                onClose={handleDismissOnboarding}
+              />
+            </SectionBoundary>
           )}
         </AnimatePresence>
       </main>
