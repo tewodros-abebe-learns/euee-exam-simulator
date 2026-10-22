@@ -1,15 +1,17 @@
 import { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, deleteDoc, doc, updateDoc, getDocs } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrorHandler';
 import { db, auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { Trash2, Loader2, Search, FolderOpen, ChevronRight, Upload } from 'lucide-react';
+import { FileText, Trash2, Edit2, Loader2, Search, FolderOpen, Upload, Type, X } from 'lucide-react';
 import ExamUploadModal from './ExamUploadModal';
+import ExportExamButton from './ExportExamButton';
 import type { ImportedExam } from '../lib/examSchema';
+
 import { offlineStorage } from '../lib/offlineStorage';
-import { subjectDisplayName } from '../lib/subjects';
+import { gradeLabelKey, subjectDisplayName } from '../lib/subjects';
 import { useSubjects, folderForSubject } from '../lib/subjectStore';
 import { runWithTimeout, LOCAL_WRITE_TIMEOUT_MS, CLOUD_WRITE_TIMEOUT_MS } from '../lib/cloudWrite';
 
@@ -39,27 +41,58 @@ interface DashboardProps {
   onContinue: (exam: Exam, session: UserExam) => void;
   onRetake: (exam: Exam) => void;
   onViewSummary: (exam: Exam, session: UserExam) => void;
-  onSelectSubject: (subject: string) => void;
   onUpload?: (file: File, subject: string, grade: string) => Promise<void>;
   onProcessText?: (text: string, subject: string, grade: string) => Promise<void>;
   onImportExam?: (exam: ImportedExam) => Promise<void>;
   isParsing?: boolean;
-  key?: string;
 }
 
-export default function Dashboard({ onViewSummary, onSelectSubject, onUpload, onProcessText, onImportExam, isParsing }: DashboardProps) {
+
+
+export default function Dashboard({ onContinue, onRetake, onViewSummary, onUpload, onProcessText, onImportExam, isParsing }: DashboardProps) {
   const { currentUser, isFirebaseAuthed } = useAuth();
   const { t } = useLanguage();
   const [exams, setExams] = useState<Exam[]>([]);
   const [userExams, setUserExams] = useState<UserExam[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedSubject, setSelectedSubject] = useState('All');
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const { subjects: folderSubjects } = useSubjects();
+  const [uploadModalDefaultTab, setUploadModalDefaultTab] = useState<'upload' | 'paste'>('upload');
   
   // Modals state
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deletingExamId, setDeletingExamId] = useState<string | null>(null);
+  const [renamingExam, setRenamingExam] = useState<Exam | null>(null);
+  const [movingExam, setMovingExam] = useState<Exam | null>(null);
+  const [newTitle, setNewTitle] = useState('');
+  const [newSubject, setNewSubject] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  // Escape closes whichever confirmation dialog is open, so a stray key press
+  // never traps the student inside a modal.
+  useEffect(() => {
+    if (!deletingExamId && !renamingExam && !movingExam) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (deletingExamId && !isDeleting) setDeletingExamId(null);
+      if (renamingExam && !isUpdating) setRenamingExam(null);
+      if (movingExam && !isUpdating) setMovingExam(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [deletingExamId, renamingExam, movingExam, isDeleting, isUpdating]);
+
+  useEffect(() => {
+    if (deletingExamId || renamingExam || movingExam || isUploadModalOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [deletingExamId, renamingExam, movingExam, isUploadModalOpen]);
 
   // Last-resort failsafe: whatever is slow (IndexedDB, a stalled listener), the
   // list must never be stuck behind a spinner.
@@ -192,7 +225,7 @@ export default function Dashboard({ onViewSummary, onSelectSubject, onUpload, on
         setLoading(false);
       });
     } catch (err) {
-      console.warn("Could not setup Firestore listeners:", err);
+      console.warn("Could not setup Firestore listeners in Home:", err);
     }
 
     return () => {
@@ -202,124 +235,166 @@ export default function Dashboard({ onViewSummary, onSelectSubject, onUpload, on
     };
   }, [currentUser, isFirebaseAuthed]);
 
+  const { subjects: folderSubjects } = useSubjects();
+  const SUBJECTS: string[] = ['All', ...folderSubjects];
+  const getSubjectName = (subj: string) => subjectDisplayName(subj, t);
+  const getGradeName = (grd?: string) => t(gradeLabelKey(grd));
+
   const filteredExams = useMemo(() => {
-    return exams.filter(exam => 
-      exam.title.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [exams, searchQuery]);
-
-  const examsBySubject = useMemo(() => {
-    const map: Record<string, Exam[]> = {};
-    folderSubjects.forEach(sub => map[sub] = []);
-    filteredExams.forEach(exam => {
-      const folder = folderForSubject(exam.subject, folderSubjects);
-      if (map[folder]) map[folder].push(exam);
-      else map[folder] = [exam];
+    return exams.filter(exam => {
+      const matchesSearch = exam.title.toLowerCase().includes(searchQuery.toLowerCase());
+      // Folders are mutually exclusive: choosing "General" shows the papers
+      // that belong to no other folder, never a second copy of everything.
+      const subjectOk =
+        selectedSubject === 'All' || folderForSubject(exam.subject, folderSubjects) === selectedSubject;
+      return matchesSearch && subjectOk;
     });
-    return map;
-  }, [filteredExams, folderSubjects]);
+  }, [exams, searchQuery, selectedSubject, folderSubjects]);
 
-  const recentResults = useMemo(() => {
-    return userExams
-      .filter(session => session.status === 'COMPLETED')
-      .slice(0, 6)
-      .map(session => ({
-        session,
-        exam: exams.find(e => e.id === session.examId),
-      }))
-      .filter(item => Boolean(item.exam));
-  }, [userExams, exams]);
+  const handleRenameExam = (exam: Exam) => {
+    setRenamingExam(exam);
+    setNewTitle(exam.title);
+  };
 
-  const confirmDelete = async () => {
-    if (!deleteConfirmId) return;
-    setIsDeleting(true);
-    const path = `user_exams/${deleteConfirmId}`;
-    const sessionId = deleteConfirmId;
+  const handleMoveExam = (exam: any) => {
+    setMovingExam(exam);
+    setNewSubject(exam.subject);
+  };
+
+  const confirmRename = async () => {
+    if (!renamingExam || !newTitle.trim()) return;
+    setIsUpdating(true);
+    const updatedTitle = newTitle.trim();
+    const path = `exams/${renamingExam.id}`;
     try {
-      // Local first: the row disappears at once even if the cloud is down.
-      await runWithTimeout(
-        () => offlineStorage.deleteSession(sessionId),
-        LOCAL_WRITE_TIMEOUT_MS,
-        'Delete result (local)'
-      );
-      setUserExams(prev => prev.filter(s => s.id !== sessionId));
-      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !sessionId.startsWith('guest-') && !sessionId.startsWith('local_')) {
+      // The device copy is the source of truth for what the student just did;
+      // it is written first so an unreachable backend cannot swallow the edit.
+      const cached = await offlineStorage.getExamById(renamingExam.id);
+      if (cached) {
+        await runWithTimeout(
+          () => offlineStorage.saveExam({ ...cached, title: updatedTitle }),
+          LOCAL_WRITE_TIMEOUT_MS,
+          'Rename exam (local)'
+        );
+      }
+      setExams(prev => prev.map(e => e.id === renamingExam.id ? { ...e, title: updatedTitle } : e));
+      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !renamingExam.id.startsWith('local_')) {
+        const id = renamingExam.id;
         void runWithTimeout(
-          () => deleteDoc(doc(db, 'user_exams', sessionId)),
+          () => updateDoc(doc(db, 'exams', id), { title: updatedTitle }),
           CLOUD_WRITE_TIMEOUT_MS,
-          'Delete result (cloud)'
+          'Rename exam (cloud)'
+        );
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    } finally {
+      setRenamingExam(null);
+      setIsUpdating(false);
+    }
+  };
+
+  const confirmMove = async () => {
+    if (!movingExam || !newSubject) return;
+    setIsUpdating(true);
+    const path = `exams/${movingExam.id}`;
+    const movingId = movingExam.id;
+    const targetSubject = newSubject;
+    try {
+      const cached = await offlineStorage.getExamById(movingId);
+      if (cached) {
+        await runWithTimeout(
+          () => offlineStorage.saveExam({ ...cached, subject: targetSubject }),
+          LOCAL_WRITE_TIMEOUT_MS,
+          'Move exam (local)'
+        );
+      }
+      setExams(prev => prev.map(e => e.id === movingId ? { ...e, subject: targetSubject } : e));
+      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !movingId.startsWith('local_')) {
+        void runWithTimeout(
+          () => updateDoc(doc(db, 'exams', movingId), { subject: targetSubject }),
+          CLOUD_WRITE_TIMEOUT_MS,
+          'Move exam (cloud)'
+        );
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    } finally {
+      setMovingExam(null);
+      setIsUpdating(false);
+    }
+  };
+
+  const confirmDeleteExam = async () => {
+    if (!deletingExamId) return;
+    setIsDeleting(true);
+    const path = `exams/${deletingExamId}`;
+    const targetId = deletingExamId;
+    try {
+      // Remove it from the device first so the click always takes effect.
+      await runWithTimeout(
+        () => offlineStorage.deleteExam(targetId),
+        LOCAL_WRITE_TIMEOUT_MS,
+        'Delete exam (local)'
+      );
+      setExams(prev => prev.filter(e => e.id !== targetId));
+
+      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !targetId.startsWith('local_')) {
+        try {
+          const sessionsQuery = query(
+            collection(db, 'user_exams'),
+            where('examId', '==', targetId),
+            where('userId', '==', currentUser.uid)
+          );
+          const sessionsSnapshot = await getDocs(sessionsQuery);
+          const deletePromises = sessionsSnapshot.docs.map(sessionDoc => deleteDoc(sessionDoc.ref));
+          await Promise.all(deletePromises);
+        } catch (sessionErr) {
+          console.warn("User sessions cleanup notice:", sessionErr);
+        }
+        await runWithTimeout(
+          () => deleteDoc(doc(db, 'exams', targetId)),
+          CLOUD_WRITE_TIMEOUT_MS,
+          'Delete exam (cloud)'
         );
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
     } finally {
-      setDeleteConfirmId(null);
+      setDeletingExamId(null);
       setIsDeleting(false);
     }
   };
 
-
-  // Folders that hold papers come first: an empty folder should never push a
-  // folder you actually use below the fold.
-  const orderedFolders = useMemo(() => {
-    const count = (folder: string) => (examsBySubject[folder] ?? []).length;
-    return [...folderSubjects].sort((a, b) => count(b) - count(a));
-  }, [folderSubjects, examsBySubject]);
-
-  const getSubjectName = (subj: string) => subjectDisplayName(subj, t);
-
-  if (loading) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 py-8 md:py-12" aria-busy="true">
-        <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-3xl p-8 md:p-12 mb-10 animate-pulse">
-          <div className="h-7 w-64 max-w-full rounded bg-white/5 mb-3" />
-          <div className="h-4 w-80 max-w-full rounded bg-white/5" />
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[0, 1, 2, 3, 4, 5].map((index) => (
-            <div
-              key={index}
-              className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl p-5 flex items-center gap-3.5 animate-pulse"
-            >
-              <div className="w-11 h-11 rounded-xl bg-white/5 shrink-0" />
-              <div className="flex-1">
-                <div className="h-4 w-2/3 rounded bg-white/5 mb-2" />
-                <div className="h-3 w-1/3 rounded bg-white/5" />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 md:py-12">
-      {/* Hero Section */}
-      <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-3xl p-8 md:p-12 mb-12 flex flex-col md:flex-row items-center justify-between gap-8 relative overflow-hidden">
-        {/* Abstract Background Decoration */}
-        <div className="absolute top-0 right-0 w-64 h-64 bg-[#8AB4F8] opacity-5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
-        <div className="absolute bottom-0 left-0 w-48 h-48 bg-[#8AB4F8] opacity-5 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2 pointer-events-none"></div>
-
-        <div className="flex-1 w-full text-left relative z-10">
-          <h1 className="text-3xl md:text-4xl font-bold text-[var(--text-primary)] mb-2">{t('dashWelcome')}</h1>
-          <p className="text-base md:text-lg text-[var(--text-secondary)]">{t('dashSubtitle')}</p>
+    <div className="max-w-6xl mx-auto px-4 py-8 md:py-10">
+      {/* Page header: the library now lives on "My Exams" */}
+      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-8">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-display font-bold text-[var(--text-primary)] tracking-tight">
+            {t('myExamsTitle')}
+          </h1>
+          <p className="text-sm text-[var(--text-secondary)] mt-1">{t('myExamsSubtitle')}</p>
         </div>
-        
-        <div className="w-full md:w-auto flex flex-col sm:flex-row items-center gap-3 relative z-10 shrink-0">
-          <div className="relative shadow-sm w-full sm:w-64">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-secondary)]" />
-            <input 
-              type="text"
-              placeholder={t('searchYourExams')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-2xl py-3 pl-11 pr-5 text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-[#8AB4F8]/50 focus:border-[#8AB4F8] transition-all text-sm"
-            />
-          </div>
+        <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
           <button
-            onClick={() => setIsUploadModalOpen(true)}
-            className="w-full sm:w-auto bg-[#8AB4F8] text-gray-900 px-5 py-3 rounded-2xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 text-sm shadow-md whitespace-nowrap"
+            type="button"
+            onClick={() => {
+              setUploadModalDefaultTab('paste');
+              setIsUploadModalOpen(true);
+            }}
+            className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 border border-[var(--border-color)] text-[var(--text-primary)] font-bold text-sm hover:bg-white/10 transition-all"
+          >
+            <Type className="w-4 h-4 text-[#8AB4F8]" />
+            {t('pasteQuestions')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setUploadModalDefaultTab('upload');
+              setIsUploadModalOpen(true);
+            }}
+            className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#8AB4F8] text-gray-900 font-bold text-sm hover:bg-[#AECBFA] transition-all shadow-md"
           >
             <Upload className="w-4 h-4" />
             {t('uploadNewExam')}
@@ -327,115 +402,312 @@ export default function Dashboard({ onViewSummary, onSelectSubject, onUpload, on
         </div>
       </div>
 
-      {/* Recent results */}
-      {recentResults.length > 0 && (
-        <div className="mb-12">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-black text-[var(--text-primary)]">{t('recentActivity')}</h2>
-            <span className="text-xs text-[var(--text-secondary)]">{recentResults.length}</span>
+      <div className="space-y-8">
+        <div className="space-y-6">
+          {/* Search */}
+          <div className="flex items-center">
+            <div className="relative w-full sm:max-w-md">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-secondary)]" />
+              <input
+                type="text"
+                placeholder={t('searchYourExams')}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl py-3.5 pl-12 pr-11 text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:border-[#8AB4F8] transition-all text-sm"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  aria-label={t('clearSearch')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/10 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {recentResults.map(({ session, exam }) => {
-              const total = session.total ?? (exam!.questions?.length || 0);
-              const score = session.score ?? 0;
-              const percentage = session.percentage ?? (total > 0 ? Math.round((score / total) * 100) : 0);
-              const isPracticeOnly = total === 0;
-              return (
-                <div key={session.id} className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl p-4 flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-[var(--text-primary)] truncate">{exam!.title}</p>
-                    <p className="text-[11px] font-semibold text-[var(--text-secondary)] mt-1">
-                      {isPracticeOnly ? t('practiceModeLabel') : `${score}/${total}`}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {!isPracticeOnly && (
-                      <span className={`text-sm font-black ${percentage >= 50 ? 'text-emerald-500' : 'text-red-500'}`}>{percentage}%</span>
-                    )}
-                    <button
-                      onClick={() => onViewSummary(exam!, session)}
-                      className="px-3 py-2 rounded-xl bg-[var(--bg-accent)] border border-[var(--border-color)] text-[11px] font-bold text-[var(--text-primary)] hover:bg-[var(--card-hover)] transition-colors"
-                    >
-                      {t('results')}
-                    </button>
-                    <button
-                      onClick={() => setDeleteConfirmId(session.id)}
-                      aria-label={t('delete')}
-                      title={t('delete')}
-                      className="p-2 rounded-xl text-[var(--text-secondary)] hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
-      {/* Subject Folders Grid */}
-      {exams.length === 0 ? (
-        <div className="bg-[var(--bg-secondary)] border border-dashed border-[var(--border-color)] rounded-3xl p-10 md:p-14 text-center">
-          <div className="w-14 h-14 rounded-2xl bg-[#8AB4F8]/10 text-[#8AB4F8] flex items-center justify-center mx-auto mb-5">
-            <FolderOpen className="w-7 h-7" />
-          </div>
-          <h2 className="text-xl font-bold text-[var(--text-primary)] mb-1.5">{t('startFirstExam')}</h2>
-          <p className="text-sm text-[var(--text-secondary)] mb-6 max-w-sm mx-auto">{t('startFirstExamDesc')}</p>
-          <button
-            onClick={() => setIsUploadModalOpen(true)}
-            className="bg-[#8AB4F8] text-gray-900 px-6 py-3 rounded-2xl font-bold hover:bg-[#AECBFA] transition-all inline-flex items-center gap-2 text-sm"
-          >
-            <Upload className="w-4 h-4" />
-            {t('uploadNewExam')}
-          </button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {orderedFolders.map((subject) => {
-            const subjectExams = examsBySubject[subject] ?? [];
-            const isEmpty = subjectExams.length === 0;
-
-            return (
+          {/* Subject Filter */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+            {SUBJECTS.map(subject => (
               <button
                 key={subject}
-                onClick={() => onSelectSubject(subject)}
-                aria-label={`${getSubjectName(subject)} — ${t('examsAvailable', { count: subjectExams.length })}`}
-                className={`w-full bg-[var(--bg-secondary)] border border-[var(--border-color)] p-5 rounded-2xl transition-all text-left flex items-center justify-between gap-3 group focus:outline-none focus-visible:ring-2 focus-visible:ring-[#8AB4F8]/60 ${
-                  isEmpty ? 'opacity-65 hover:opacity-100 hover:border-[var(--border-color)]' : 'hover:border-[#8AB4F8]/50 hover:-translate-y-0.5'
+                onClick={() => setSelectedSubject(subject)}
+                aria-pressed={selectedSubject === subject}
+                className={`px-5 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
+                  selectedSubject === subject
+                    ? 'bg-[#8AB4F8] text-gray-900'
+                    : 'bg-white/5 text-[var(--text-secondary)] hover:bg-white/10'
                 }`}
               >
-                <div className="flex items-center gap-3.5 min-w-0">
-                  <div className="w-11 h-11 rounded-xl flex items-center justify-center transition-colors bg-white/5 group-hover:bg-[#8AB4F8]/10 shrink-0">
-                    <FolderOpen className="w-5 h-5 text-[var(--text-secondary)] group-hover:text-[#8AB4F8] transition-colors" />
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="text-base font-bold text-[var(--text-primary)] truncate">{getSubjectName(subject)}</h3>
-                    <p className="text-xs text-[var(--text-secondary)]">{t('examsAvailable', { count: subjectExams.length })}</p>
-                  </div>
-                </div>
-                <ChevronRight className="w-4 h-4 text-gray-600 group-hover:text-[#8AB4F8] transition-all shrink-0" />
+                {subject === 'All' ? t('allExams') : getSubjectName(subject)}
               </button>
-            );
-          })}
+            ))}
+          </div>
+
+          {/* Exam List */}
+          {loading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" aria-busy="true">
+              {[0, 1, 2].map((index) => (
+                <div
+                  key={index}
+                  className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-3xl p-6 animate-pulse"
+                >
+                  <div className="flex items-start justify-between mb-6">
+                    <div className="w-11 h-11 rounded-2xl bg-white/5" />
+                    <div className="w-16 h-5 rounded-full bg-white/5" />
+                  </div>
+                  <div className="h-4 w-3/4 rounded bg-white/5 mb-2.5" />
+                  <div className="h-3 w-1/2 rounded bg-white/5 mb-6" />
+                  <div className="h-9 w-24 rounded-xl bg-white/5" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredExams.length > 0 ? (
+                filteredExams.map((exam) => {
+                  const sessions = userExams.filter(ue => ue.examId === exam.id);
+                  const latestSession = sessions[0];
+
+                  return (
+                    <motion.div 
+                      key={exam.id}
+                      layout
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-3xl p-6 hover:border-gray-700 transition-all group"
+                    >
+                      <div className="flex items-start justify-between mb-6">
+                        <div className="bg-[#8AB4F8]/10 p-3 rounded-2xl">
+                          <FileText className="w-6 h-6 text-[#8AB4F8]" />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <ExportExamButton exam={exam} />
+                          <button 
+                            onClick={() => handleRenameExam(exam)}
+                            className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                            title={t('renameLabel')}
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={() => handleMoveExam(exam)}
+                            className="p-2 text-[var(--text-secondary)] hover:text-[#8AB4F8] transition-colors"
+                            title={t('moveToFolder')}
+                          >
+                            <FolderOpen className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={() => setDeletingExamId(exam.id)}
+                            className="p-2 text-[var(--text-secondary)] hover:text-red-400 transition-colors"
+                            title={t('delete')}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <h3 className="text-lg font-bold text-[var(--text-primary)] mb-1.5 line-clamp-2 leading-snug">{exam.title}</h3>
+                      <p className="text-[11px] text-[var(--text-secondary)] mb-4 uppercase tracking-widest font-bold">
+                        {getSubjectName(exam.subject)}
+                        {exam.grade && exam.grade !== 'General' && ` • ${getGradeName(exam.grade)}`}
+                        {` • ${t('questionCountLabel', { count: exam.questions?.length || 0 })}`}
+                      </p>
+
+                      <div className="flex items-center justify-between pt-5 border-t border-white/5 gap-3">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] text-[var(--text-secondary)] uppercase tracking-widest mb-1">{t('status')}</span>
+                          {latestSession ? (
+                            <span className={`text-[10px] font-bold uppercase tracking-widest ${
+                              latestSession.status === 'COMPLETED' ? 'text-emerald-400' : 'text-amber-400'
+                            }`}>
+                              {latestSession.status === 'COMPLETED' ? t('statusCompleted') : t('statusInProgress')}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-[var(--text-secondary)] uppercase tracking-widest">{t('newStatus')}</span>
+                          )}
+                        </div>
+
+                        <div className="flex gap-2">
+                          {latestSession?.status === 'IN_PROGRESS' ? (
+                            <button 
+                              onClick={() => onContinue(exam, latestSession)}
+                              className="bg-[#8AB4F8] text-gray-900 px-6 py-2 rounded-xl text-xs font-bold hover:bg-[#AECBFA] transition-all"
+                            >
+                              {t('continueText')}
+                            </button>
+                          ) : latestSession?.status === 'COMPLETED' ? (
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => onViewSummary(exam, latestSession)}
+                                className="bg-white/5 text-[var(--text-primary)] px-6 py-2 rounded-xl text-xs font-bold hover:bg-white/10 transition-all"
+                              >
+                                {t('results')}
+                              </button>
+                              <button 
+                                onClick={() => onRetake(exam)}
+                                className="bg-[#8AB4F8] text-gray-900 px-6 py-2 rounded-xl text-xs font-bold hover:bg-[#AECBFA] transition-all"
+                              >
+                                {t('retake')}
+                              </button>
+                            </div>
+                          ) : (
+                            <button 
+                              onClick={() => onRetake(exam)}
+                              className="bg-[#8AB4F8] text-gray-900 px-6 py-2 rounded-xl text-xs font-bold hover:bg-[#AECBFA] transition-all"
+                            >
+                              {t('start')}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })
+              ) : (
+                <div className="col-span-full py-16 sm:py-20 px-6 text-center bg-[var(--bg-secondary)] border border-dashed border-[var(--border-color)] rounded-[40px]">
+                  <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-[#8AB4F8]/10 text-[#8AB4F8] flex items-center justify-center">
+                    <FileText className="w-7 h-7" />
+                  </div>
+                  <p className="text-[var(--text-primary)] font-bold mb-1.5">
+                    {searchQuery
+                      ? t('noSearchResults')
+                      : selectedSubject !== 'All'
+                        ? t('noExamsInFolder')
+                        : t('noExamsYetTitle')}
+                  </p>
+                  <p className="text-sm text-[var(--text-secondary)] mb-6 max-w-sm mx-auto leading-relaxed">
+                    {searchQuery
+                      ? t('noSearchResultsDesc')
+                      : selectedSubject !== 'All'
+                        ? t('noExamsInFolderDesc')
+                        : t('noExamsYetDesc')}
+                  </p>
+                  {searchQuery ? (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="text-[#8AB4F8] font-bold hover:underline"
+                    >
+                      {t('clearSearch')}
+                    </button>
+                  ) : selectedSubject !== 'All' ? (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSubject('All')}
+                      className="text-[#8AB4F8] font-bold hover:underline"
+                    >
+                      {t('showAllExams')}
+                    </button>
+                  ) : (
+                    <div className="flex flex-col sm:flex-row items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUploadModalDefaultTab('upload');
+                          setIsUploadModalOpen(true);
+                        }}
+                        className="w-full sm:w-auto bg-[#8AB4F8] text-gray-900 px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-[#AECBFA] transition-all"
+                      >
+                        {t('uploadNewExam')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUploadModalDefaultTab('paste');
+                          setIsUploadModalOpen(true);
+                        }}
+                        className="w-full sm:w-auto bg-white/5 border border-[var(--border-color)] text-[var(--text-primary)] px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-white/10 transition-all"
+                      >
+                        {t('pasteQuestions')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Modals */}
       <AnimatePresence>
-        {deleteConfirmId && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDeleteConfirmId(null)} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="relative bg-[var(--bg-secondary)] border border-[var(--border-color)] p-8 rounded-3xl max-w-sm w-full shadow-2xl">
+        {deletingExamId && (
+          <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center px-4 overflow-y-auto">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDeletingExamId(null)} className="fixed inset-0 bg-black/80 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-[var(--bg-secondary)] border border-[var(--border-color)] p-6 sm:p-8 rounded-[32px] max-w-sm w-full shadow-2xl my-auto max-h-[85vh] overflow-y-auto">
               <div className="bg-red-400/10 w-12 h-12 rounded-2xl flex items-center justify-center mb-6">
                 <Trash2 className="w-6 h-6 text-red-400" />
               </div>
-              <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('deleteSessionTitle')}</h3>
-              <p className="text-[var(--text-secondary)] mb-8">{t('deleteSessionConfirm')}</p>
+              <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('deleteExamTitle')}</h3>
+              <p className="text-[var(--text-secondary)] mb-8">{t('deleteExamConfirm')}</p>
               <div className="flex gap-3">
-                <button onClick={() => setDeleteConfirmId(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
-                <button onClick={confirmDelete} disabled={isDeleting} className="flex-1 bg-red-400 text-white py-3 rounded-xl font-bold hover:bg-red-500 transition-all flex items-center justify-center gap-2">
+                <button onClick={() => setDeletingExamId(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
+                <button onClick={confirmDeleteExam} disabled={isDeleting} className="flex-1 bg-red-400 text-white py-3 rounded-xl font-bold hover:bg-red-500 transition-all flex items-center justify-center gap-2">
                   {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : t('delete')}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {renamingExam && (
+          <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center px-4 overflow-y-auto">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setRenamingExam(null)} className="fixed inset-0 bg-black/80 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-[var(--bg-secondary)] border border-[var(--border-color)] p-6 sm:p-8 rounded-[32px] max-w-md w-full shadow-2xl my-auto max-h-[85vh] overflow-y-auto">
+              <div className="bg-[#8AB4F8]/10 w-12 h-12 rounded-2xl flex items-center justify-center mb-6">
+                <Edit2 className="w-6 h-6 text-[#8AB4F8]" />
+              </div>
+              <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('renameExamTitle')}</h3>
+              <p className="text-[var(--text-secondary)] mb-6">{t('renameExamPrompt')}</p>
+              <input type="text" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} className="w-full bg-[var(--bg-accent)] border border-[var(--border-color)] rounded-xl px-4 py-3 text-[var(--text-primary)] placeholder:text-gray-600 focus:outline-none focus:border-[#8AB4F8] transition-colors mb-8" placeholder={t('examTitlePlaceholder')} autoFocus />
+              <div className="flex gap-3">
+                <button onClick={() => setRenamingExam(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
+                <button onClick={confirmRename} disabled={isUpdating || !newTitle.trim()} className="flex-1 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+                  {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : t('saveChanges')}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {movingExam && (
+          <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center px-4 overflow-y-auto">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setMovingExam(null)} className="fixed inset-0 bg-black/80 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-[var(--bg-secondary)] border border-[var(--border-color)] p-6 sm:p-8 rounded-[32px] max-w-md w-full shadow-2xl my-auto max-h-[85vh] overflow-y-auto">
+              <div className="bg-[#8AB4F8]/10 w-12 h-12 rounded-2xl flex items-center justify-center mb-6">
+                <FolderOpen className="w-6 h-6 text-[#8AB4F8]" />
+              </div>
+              <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('moveExamTitle')}</h3>
+              <p className="text-[var(--text-secondary)] mb-6">{t('selectNewFolder')} — "{movingExam.title}"</p>
+              
+              <div className="space-y-6 mb-8">
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3 block">{t('subjectLabel')}</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {SUBJECTS.filter(s => s !== 'All').map(subject => (
+                      <button
+                        key={subject}
+                        onClick={() => setNewSubject(subject)}
+                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
+                          newSubject === subject 
+                            ? 'bg-[#8AB4F8] text-gray-900 border-[#8AB4F8]' 
+                            : 'bg-[var(--bg-accent)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-gray-600'
+                        }`}
+                      >
+                        {getSubjectName(subject)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button onClick={() => setMovingExam(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
+                <button onClick={confirmMove} disabled={isUpdating || !newSubject} className="flex-1 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+                  {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : t('move')}
                 </button>
               </div>
             </motion.div>
@@ -452,6 +724,7 @@ export default function Dashboard({ onViewSummary, onSelectSubject, onUpload, on
           onProcessText={onProcessText}
           onImportExam={onImportExam}
           isParsing={isParsing}
+          defaultTab={uploadModalDefaultTab}
         />
       )}
     </div>

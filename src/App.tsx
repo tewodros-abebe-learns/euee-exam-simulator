@@ -5,7 +5,6 @@ import ExamInterface from './components/ExamInterface';
 import SummaryPage from './components/SummaryPage';
 import Dashboard from './components/Dashboard';
 import Home from './components/Home';
-import SubjectDetail from './components/SubjectDetail';
 import LandingPage from './components/LandingPage';
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -29,7 +28,7 @@ import { ensureSubjectFolder } from './lib/subjectStore';
 import { getCorrectAnswer } from './lib/scoring';
 import { suggestTitleFromFileName, type ImportedExam } from './lib/examSchema';
 import { getExamProgressKey } from './lib/examProgress';
-type View = 'DASHBOARD' | 'UPLOAD' | 'TIMER_SELECTION' | 'EXAM' | 'SUMMARY' | 'SUBJECT_DETAIL';
+type View = 'DASHBOARD' | 'UPLOAD' | 'TIMER_SELECTION' | 'EXAM' | 'SUMMARY';
 type Tab = 'HOME' | 'MY_EXAM';
 
 function AppContent() {
@@ -405,7 +404,7 @@ function AppContent() {
     setErrorMessage(null);
     const prepared = prepareExamQuestions(imported.questions);
     if (prepared.questions.length === 0) {
-      throw new Error('This file did not contain any usable question. Nothing was added.');
+      throw new Error(t('emptyImportError'));
     }
     const title = imported.title?.trim() || 'Imported Exam';
     const examData = {
@@ -455,7 +454,7 @@ function AppContent() {
         }
       }
       if (file.size > 15 * 1024 * 1024) {
-        throw new Error('That file is larger than 15MB. Please compress it or upload a smaller section.');
+        throw new Error(t('fileTooLargeAi'));
       }
       const [base64, extractedText] = await Promise.all([
         readFileAsBase64(file),
@@ -743,37 +742,20 @@ function AppContent() {
           {view === 'DASHBOARD' && activeTab === 'HOME' && (currentUser || isGuestMode) && (
             <Home
               key="home"
-              onContinue={handleContinueSession}
-              onRetake={handleSelectExam}
-              onViewSummary={handleViewSummarySession}
               onUpload={handleFileUpload}
               onProcessText={handleTextSubmit}
               onImportExam={handleImportExam}
               isParsing={isParsing}
+              onOpenLibrary={() => setActiveTab('MY_EXAM')}
             />
           )}
           
-          {view === 'SUBJECT_DETAIL' && activeTab === 'HOME' && selectedSubject && (
-            <SubjectDetail
-              key="subject_detail"
-              subject={selectedSubject || ''}
-              onBack={() => setView('DASHBOARD')}
-              onContinue={handleContinueSession}
-              onRetake={handleSelectExam}
-              onViewSummary={handleViewSummarySession}
-              onUpload={handleFileUpload}
-              onProcessText={handleTextSubmit}
-              isParsing={isParsing}
-            />
-          )}
-
           {view === 'DASHBOARD' && activeTab === 'MY_EXAM' && (currentUser || isGuestMode) && (
             <Dashboard 
               key="dashboard" 
               onContinue={handleContinueSession} 
               onRetake={handleSelectExam} 
               onViewSummary={handleViewSummarySession} 
-              onSelectSubject={(subj) => { setSelectedSubject(subj); setView('SUBJECT_DETAIL'); }} 
               onUpload={handleFileUpload}
               onProcessText={handleTextSubmit}
               onImportExam={handleImportExam}

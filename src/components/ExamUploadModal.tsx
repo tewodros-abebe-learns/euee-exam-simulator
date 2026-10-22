@@ -14,8 +14,6 @@ import {
   Download,
   ChevronRight,
   ChevronLeft,
-  Eye,
-  EyeOff,
   Lock,
 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -123,8 +121,6 @@ export default function ExamUploadModal({
   // Set when the save outlives the confirm timeout: the button stays locked and
   // the modal closes by itself the moment the save lands.
   const [importPending, setImportPending] = useState(false);
-  // The key is hidden by default: the preview must never spoil answers.
-  const [showKeys, setShowKeys] = useState(false);
   const pendingSourceRef = useRef<{ file?: File; text?: string } | null>(null);
 
   const formatOption = formatById(format);
@@ -223,7 +219,6 @@ export default function ExamUploadModal({
     setPreview(report);
     setPreviewTitle(report.exam?.title || suggestTitleFromFileName(sourceName));
     setPreviewSource(sourceName);
-    setShowKeys(false);
     setTab('import');
   };
 
@@ -566,23 +561,13 @@ export default function ExamUploadModal({
                         {Math.round(preview.exam.timeLimit / 60)} min
                       </span>
                     ) : null}
-                    <button
-                      type="button"
-                      onClick={() => setShowKeys((value) => !value)}
-                      aria-pressed={showKeys}
-                      className={`${chipClass} bg-white/5 text-[#8AB4F8] hover:bg-white/10 transition-colors inline-flex items-center gap-1`}
-                    >
-                      {showKeys ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                      {showKeys ? t('hideAnswerKey') : t('showAnswerKey')}
-                    </button>
                   </div>
 
-                  {!showKeys && (
-                    <p className="text-[11px] text-[var(--text-secondary)] mb-2 flex items-center gap-1.5">
-                      <Lock className="w-3 h-3 shrink-0" />
-                      {t('answerKeyHidden')}
-                    </p>
-                  )}
+                  {/* The key stays sealed until the paper is actually sat. */}
+                  <p className="text-[11px] text-[var(--text-secondary)] mb-2 flex items-center gap-1.5">
+                    <Lock className="w-3 h-3 shrink-0" />
+                    {t('answerKeySealed')}
+                  </p>
 
                   <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1 rounded-xl">
                     {previewQuestions.map((question, index) => (
@@ -594,21 +579,14 @@ export default function ExamUploadModal({
                           {index + 1}. {question.question}
                         </p>
                         <div className="mt-1.5 flex flex-wrap gap-1.5">
-                          {question.options.map((option, optionIndex) => {
-                            const isKey = showKeys && optionIndex === question.correctAnswerIndex;
-                            return (
-                              <span
-                                key={optionIndex}
-                                className={`text-[10px] px-1.5 py-0.5 rounded-md ${
-                                  isKey
-                                    ? 'bg-emerald-400/15 text-emerald-400 font-bold'
-                                    : 'bg-white/5 text-[var(--text-secondary)]'
-                                }`}
-                              >
-                                {String.fromCharCode(65 + optionIndex)}. {option.slice(0, 28)}
-                              </span>
-                            );
-                          })}
+                          {question.options.map((option, optionIndex) => (
+                            <span
+                              key={optionIndex}
+                              className="text-[10px] px-1.5 py-0.5 rounded-md bg-white/5 text-[var(--text-secondary)]"
+                            >
+                              {String.fromCharCode(65 + optionIndex)}. {option.slice(0, 28)}
+                            </span>
+                          ))}
                         </div>
                       </div>
                     ))}
