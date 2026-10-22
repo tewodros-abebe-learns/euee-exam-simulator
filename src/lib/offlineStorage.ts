@@ -21,6 +21,12 @@ export interface OfflineExam {
   isSample?: boolean;
   isOfflineReady?: boolean;
   source?: 'custom' | 'cloud';
+  /**
+   * Official duration of the paper, when the source states one. It used to be
+   * dropped on the device copy, so an offline exam lost its recommended time
+   * and every attempt defaulted to "no official duration".
+   */
+  timeLimit?: number;
 }
 
 export interface OfflineSession {
