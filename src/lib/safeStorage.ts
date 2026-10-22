@@ -31,7 +31,9 @@ export function safeGetItem(key: string): string | null {
 /** Returns false when the value could not be stored (quota, private mode). */
 export function safeSetItem(key: string, value: string): boolean {
   try {
-    storage()?.setItem(key, value);
+    const target = storage();
+    if (!target) return false;
+    target.setItem(key, value);
     return true;
   } catch {
     return false;
