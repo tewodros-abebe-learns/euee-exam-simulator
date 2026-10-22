@@ -28,6 +28,16 @@ async function startServer() {
     frameguard: false, // REQUIRED for AI Studio preview iframe to work
   }));
 
+  // The app asks for none of these; denying them here means a future dependency
+  // cannot quietly start using the camera or location.
+  app.use((_req, res, next) => {
+    res.setHeader(
+      "Permissions-Policy",
+      "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    );
+    next();
+  });
+
   // CORS: same-origin only unless an explicit allow-list is configured.
   // (The previous wildcard let any website spend this server's AI quota.)
   const allowedOrigins = (process.env.CORS_ORIGIN || '')
@@ -67,23 +77,43 @@ async function startServer() {
     message: { error: "AI generation quota reached for this hour. Please try again later." }
   });
 
-  // Base64 uploads are ~15MB of file at most; 20MB of JSON is enough.
-  app.use(express.json({ limit: '20mb' }));
-
-  // Apply general limiter to all API routes
+  // Security headers and the broad rate limit come first: they cost almost
+  // nothing, and they must run before any body is buffered.
   app.use("/api/", apiLimiter);
   app.use("/api/", (_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
+    // Answers depend on the posted document; never let a proxy cache them.
+    res.setHeader("Cache-Control", "no-store");
     next();
   });
 
-  // API routes FIRST
+  // The AI quota is limited before the (up to 20 MB) body is parsed, so a
+  // flood of oversized uploads cannot be used to exhaust memory.
+  app.use("/api/generate-exam", aiGenerationLimiter);
+
+  // Base64 uploads are ~15MB of file at most; 20MB of JSON is enough.
+  app.use(express.json({ limit: '20mb', strict: true }));
+
+  // Malformed JSON must come back as JSON (the default is an HTML error page
+  // that the client then fails to parse).
+  app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (!err) return next();
+    const isBodyError = err.type === 'entity.parse.failed' || err.type === 'entity.too.large' || err.status === 413;
+    if (!isBodyError) return next(err);
+    const message =
+      err.status === 413
+        ? 'That upload is too large. Please split the document and try again.'
+        : 'The request body could not be read as JSON.';
+    res.status(err.status === 413 ? 413 : 400).json({ error: message });
+  });
+
+  // API routes
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
   // Apply strict limiter to AI generation
-  app.post("/api/generate-exam", aiGenerationLimiter, async (req, res) => {
+  app.post("/api/generate-exam", async (req, res) => {
     try {
       // `trust proxy` is enabled above, so req.ip reflects the real client.
       const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
@@ -102,8 +132,20 @@ async function startServer() {
         return res.status(404).json({ error: "The requested AI model could not be found. Please retry." });
       }
 
-      res.status(500).json({ error: errMsg || "Failed to parse exam questions from the document." });
+      // Never echo an internal message (stack details, upstream URLs) to the
+      // browser: log it here and give the student an actionable sentence.
+      res.status(500).json({
+        error: "The exam service hit an unexpected problem. Please try again, or import a JSON/Markdown file.",
+      });
     }
+  });
+
+  // Any other /api path (or a wrong method on a real one) is a JSON 404, never
+  // the SPA's HTML shell — that used to look like a successful response.
+  app.use("/api", (req, res) => {
+    res.status(404).json({
+      error: `Unknown API route: ${req.method} ${req.originalUrl.split('?')[0]}`,
+    });
   });
 
   // Vite middleware for development

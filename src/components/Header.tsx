@@ -22,6 +22,7 @@ import {
 import { useLanguage } from '../contexts/LanguageContext';
 import GoogleIcon from './GoogleIcon';
 import { useOffline } from '../contexts/OfflineContext';
+import { auth } from '../firebase';
 import { Language } from '../i18n/translations';
 
 interface HeaderProps {
@@ -162,9 +163,26 @@ export default function Header({
     setIsMenuOpen(false);
   }, [activeTab]);
 
-  const userName = currentUser?.name || currentUser?.displayName || t('guest');
+  // A signed-in student must always see their own name here, never "Guest":
+  // display name → stored name → email prefix (capitalised) → Student.
+  const rawName = currentUser?.name || currentUser?.displayName || '';
+  const emailPrefix = currentUser?.email ? String(currentUser.email).split('@')[0] : '';
+  const prettyPrefix = emailPrefix
+    ? emailPrefix.replace(/[._-]+/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
+    : '';
+  const userName = currentUser ? rawName || prettyPrefix || t('student') : t('guest');
   const userEmail = currentUser?.email || null;
   const userPhoto = currentUser?.photoURL || null;
+  // How the account was created — Google, email, or not signed in at all.
+  // (The User object only carries profile fields, so the provider is read from
+  // Firebase Auth itself and falls back to "Email" when it is unavailable.)
+  const providerIds: string[] =
+    auth.currentUser?.providerData?.map((entry) => entry.providerId) || [];
+  const accountKind = !currentUser
+    ? t('guestAccount')
+    : providerIds.includes('google.com')
+      ? t('signedInWithGoogle')
+      : t('signedInWithEmail');
   const showInstallRow = !isInstalled;
 
   const rowClass =
@@ -244,21 +262,55 @@ export default function Header({
               role="menu"
               className="absolute right-0 mt-2 w-[19rem] max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-5rem)] overflow-y-auto bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl shadow-2xl p-3.5 z-50"
             >
-              {/* Account: name + email */}
-              <div className="flex items-center gap-3 p-2.5 bg-[var(--bg-primary)] rounded-xl border border-[var(--border-color)] mb-3">
-                <div className="w-10 h-10 rounded-full bg-[#8AB4F8]/20 text-[#8AB4F8] flex items-center justify-center font-bold shrink-0">
-                  <UserIcon className="w-5 h-5 text-[#8AB4F8]" />
+              {/* Account: who am I? Always shown first in the panel. */}
+              <div className="p-3 bg-[var(--bg-primary)] rounded-xl border border-[var(--border-color)] mb-3">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <span className="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+                    {t('account')}
+                  </span>
+                  <span
+                    className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide border ${
+                      currentUser
+                        ? 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20'
+                        : 'text-[var(--text-secondary)] bg-[var(--bg-secondary)] border-[var(--border-color)]'
+                    }`}
+                  >
+                    {accountKind}
+                  </span>
                 </div>
-                <div className="flex flex-col min-w-0 flex-1">
-                  <span className="text-sm font-bold text-[var(--text-primary)] truncate">
-                    {userName}
-                  </span>
-                  <span className="text-[11px] text-[var(--text-secondary)] truncate flex items-center gap-1">
-                    <Mail className="w-3 h-3 shrink-0" />
-                    <span className="truncate">
-                      {userEmail || (currentUser ? t('noEmailOnAccount') : t('guestAccount'))}
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-[#8AB4F8]/20 text-[#8AB4F8] flex items-center justify-center font-bold text-sm shrink-0 overflow-hidden">
+                    {userPhoto ? (
+                      <img
+                        src={userPhoto}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : userName ? (
+                      userName.trim().charAt(0).toUpperCase()
+                    ) : (
+                      <UserIcon className="w-5 h-5 text-[#8AB4F8]" />
+                    )}
+                  </div>
+                  <div className="flex flex-col min-w-0 flex-1">
+                    <span className="text-sm font-bold text-[var(--text-primary)] truncate">
+                      {userName}
                     </span>
-                  </span>
+                    <span className="text-[11px] text-[var(--text-secondary)] truncate flex items-center gap-1">
+                      {currentUser ? (
+                        <>
+                          <Mail className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{userEmail || t('noEmailOnAccount')}</span>
+                        </>
+                      ) : (
+                        <>
+                          <UserIcon className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{t('guestStatusDesc')}</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -365,6 +417,9 @@ export default function Header({
                   </button>
                 ) : (
                   <div className="space-y-2">
+                    <div className="px-1 pb-0.5 text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">
+                      {t('signInToSync')}
+                    </div>
                     {googleError && (
                       <p className="text-[10px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg p-2 leading-relaxed text-left">
                         {googleError}

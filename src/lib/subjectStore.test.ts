@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   addSubject,
   listSubjects,
+  listFolders,
   removeSubject,
+  renameSubject,
   subjectMatchesFolder,
   canonicalKey,
   folderForSubject,
@@ -76,4 +78,50 @@ test('an imported paper always gets a folder to live in', () => {
   assert.equal(ensureSubjectFolder('mathematics'), 'Math');
   assert.equal(ensureSubjectFolder('   '), 'General');
   removeSubject('Agricultural Science');
+});
+
+test('a renamed folder keeps every paper it already holds', () => {
+  const result = renameSubject('Chemistry', 'Chem');
+  assert.equal(result.ok, true);
+  assert.ok(listSubjects().includes('Chem'));
+  assert.ok(!listSubjects().includes('Chemistry'));
+  // Papers were stored as "Chemistry" and must not need rewriting.
+  assert.equal(folderForSubject('Chemistry', listSubjects()), 'Chem');
+  assert.equal(folderForSubject('chemistry', listSubjects()), 'Chem');
+  assert.equal(folderForSubject('Chem', listSubjects()), 'Chem');
+  // A newly moved paper stores the new label and still lands in the folder.
+  assert.equal(subjectMatchesFolder('Chem', 'Chem'), true);
+  renameSubject('Chem', 'Chemistry');
+  assert.equal(folderForSubject('Chemistry', listSubjects()), 'Chemistry');
+});
+
+test('a renamed custom folder keeps its papers too', () => {
+  addSubject('Geography');
+  const keyBefore = listFolders().find((folder) => folder.name === 'Geography')?.key;
+  assert.equal(renameSubject('Geography', 'Geo').ok, true);
+  assert.equal(folderForSubject('Geography', listSubjects()), 'Geo');
+  assert.equal(listFolders().find((folder) => folder.name === 'Geo')?.key, keyBefore);
+  removeSubject('Geo');
+});
+
+test('deleting a folder never loses papers: they fall back to General', () => {
+  removeSubject('SAT');
+  assert.ok(!listSubjects().includes('SAT'));
+  assert.equal(folderForSubject('SAT', listSubjects()), 'General');
+  // An import must not silently resurrect a folder the student deleted.
+  assert.equal(ensureSubjectFolder('SAT'), 'General');
+  // ...but re-creating it by hand brings it (and its papers) straight back.
+  assert.equal(addSubject('sat'), 'SAT');
+  assert.ok(listSubjects().includes('SAT'));
+  assert.equal(folderForSubject('SAT', listSubjects()), 'SAT');
+});
+
+test('folder names are validated: no duplicates, no unusable names, General is locked', () => {
+  assert.deepEqual(renameSubject('General', 'Everything'), { ok: false, error: 'locked' });
+  assert.equal(renameSubject('Math', 'Biology').ok, false);
+  assert.equal(renameSubject('Math', 'a').ok, false);
+  assert.equal(renameSubject('Math', '   ').ok, false);
+  assert.equal(renameSubject('Nope', 'Something').ok, false);
+  removeSubject('General');
+  assert.ok(listSubjects().includes('General'));
 });

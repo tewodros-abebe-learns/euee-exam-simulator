@@ -148,19 +148,17 @@ export default function ExamInterface({
   const [showExitModal, setShowExitModal] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [showZoomSlider, setShowZoomSlider] = useState(false);
-  const [showZoomHint, setShowZoomHint] = useState(true);
   const hasSubmittedRef = useRef(false);
   const answersRef = useRef(selectedAnswers);
   answersRef.current = selectedAnswers;
 
-  // Close Zoom slider & hint bubble when clicking anywhere outside
+  // Close the Zoom slider when clicking anywhere outside it.
   useEffect(() => {
-    if (!showZoomSlider && !showZoomHint) return;
+    if (!showZoomSlider) return;
 
     const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
       if (zoomContainerRef.current && !zoomContainerRef.current.contains(e.target as Node)) {
         setShowZoomSlider(false);
-        setShowZoomHint(false);
       }
     };
 
@@ -170,7 +168,7 @@ export default function ExamInterface({
       document.removeEventListener('mousedown', handleOutsideClick);
       document.removeEventListener('touchstart', handleOutsideClick);
     };
-  }, [showZoomSlider, showZoomHint]);
+  }, [showZoomSlider]);
 
   // Keyboard Navigation (arrows navigate, A-D / 1-4 select an option)
   useEffect(() => {
@@ -183,10 +181,12 @@ export default function ExamInterface({
       // Never hijack browser/system shortcuts (Ctrl+F, Cmd+A, Alt+← …).
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
+      // Papers can carry up to ten options, so the shortcuts cover A–J and 1–9
+      // instead of silently ignoring options F onwards.
       const key = e.key.toUpperCase();
-      const optionIndex = /^[A-E]$/.test(key)
+      const optionIndex = /^[A-J]$/.test(key)
         ? key.charCodeAt(0) - 65
-        : /^[1-5]$/.test(key)
+        : /^[1-9]$/.test(key)
           ? Number(key) - 1
           : -1;
       if (optionIndex >= 0) {
@@ -221,6 +221,23 @@ export default function ExamInterface({
       activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, [currentIndex]);
+
+  // Leaving mid-exam is only dangerous when progress is NOT saved: then a
+  // refresh or a closed tab really does destroy every answer, and the browser's
+  // own "leave site?" prompt is the only honest warning available. A saved exam
+  // can be resumed, so it is never nagged about.
+  // (There used to be a second, unconditional handler here; the two together
+  // warned even when the answers were safely stored.)
+  useEffect(() => {
+    if (saveProgress) return;
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      if (hasSubmittedRef.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving);
+  }, [saveProgress]);
 
   // Auto-save to LocalStorage with quota & security error protection
   useEffect(() => {
@@ -338,17 +355,6 @@ export default function ExamInterface({
     });
   };
 
-  // Warn before leaving/refreshing mid-exam so answers are not lost silently
-  useEffect(() => {
-    if (hasSubmittedRef.current) return;
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
-
   const [showBlockDirections, setShowBlockDirections] = useState(false);
 
   // Reset showBlockDirections whenever question changes
@@ -462,8 +468,15 @@ export default function ExamInterface({
       <div className="flex flex-col h-full items-center justify-center bg-[var(--bg-primary)] text-[var(--text-primary)] p-6">
         <AlertTriangle className="w-12 h-12 text-yellow-400 mb-4" />
         <h2 className="text-2xl font-bold mb-2">{t('noQuestionsFound')}</h2>
-        <p className="text-[var(--text-secondary)] mb-6 text-center">{t('noQuestionsFoundDesc')}</p>
-        <button onClick={() => onBack()} className="bg-[#8AB4F8] text-gray-900 px-6 py-2.5 rounded-xl font-bold hover:bg-[#AECBFA] transition-all">{t('backToDashboard')}</button>
+        <p className="text-[var(--text-secondary)] mb-6 text-center max-w-sm leading-relaxed">
+          {t('noQuestionsFoundDesc')}
+        </p>
+        <button
+          onClick={() => onBack(answersRef.current)}
+          className="bg-[#8AB4F8] text-gray-900 px-6 py-2.5 rounded-xl font-bold hover:bg-[#AECBFA] transition-all"
+        >
+          {t('backToDashboard')}
+        </button>
       </div>
     );
   }
@@ -523,13 +536,10 @@ export default function ExamInterface({
                   <span>{t('exit')}</span>
                 </button>
                 
-                {/* Zoom Button with Pop-up & Speech Bubble */}
+                {/* Zoom control (the slider opens on demand) */}
                 <div className="relative">
                   <button
-                    onClick={() => {
-                      setShowZoomHint(false);
-                      setShowZoomSlider(prev => !prev);
-                    }}
+                    onClick={() => setShowZoomSlider(prev => !prev)}
                     className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl border transition-all shadow-xs text-xs font-bold ${
                       showZoomSlider || zoomLevel !== 1
                         ? 'bg-[#8AB4F8]/15 border-[#8AB4F8]/50 text-[#3b82f6] dark:text-[#8AB4F8]' 
@@ -541,40 +551,6 @@ export default function ExamInterface({
                     <span>{Math.round(zoomLevel * 100)}%</span>
                   </button>
 
-                  {/* Default Speech Bubble / Pop-up Message on Exam Start */}
-                  <AnimatePresence>
-                    {showZoomHint && !showZoomSlider && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 10, scale: 0.94 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 6, scale: 0.94 }}
-                        transition={{ duration: 0.2, ease: "easeOut" }}
-                        onClick={() => {
-                          setShowZoomHint(false);
-                          setShowZoomSlider(true);
-                        }}
-                        className="absolute top-full left-0 mt-2.5 p-3.5 bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-2xl shadow-xl z-50 w-64 md:w-72 origin-top-left cursor-pointer hover:border-[#8AB4F8]/60 transition-colors group"
-                      >
-                        {/* Speech Bubble Arrow pointing to Zoom Button */}
-                        <div className="absolute -top-2 left-6 w-3.5 h-3.5 bg-[var(--bg-secondary)] border-t border-l border-[var(--border-color)] transform rotate-45" />
-
-                        <div className="relative z-10 flex items-start gap-2.5">
-                          <div className="p-1.5 rounded-xl bg-[#8AB4F8]/15 text-[#3b82f6] dark:text-[#8AB4F8] shrink-0 mt-0.5">
-                            <ZoomIn className="w-4 h-4" />
-                          </div>
-                          <div className="flex-1 text-left">
-                            <p className="text-xs font-semibold text-[var(--text-primary)] leading-snug">
-                              {t('zoomSpeechBubble')}
-                            </p>
-                            <span className="text-[10px] text-[#3b82f6] dark:text-[#8AB4F8] font-bold mt-1 inline-block opacity-90 group-hover:underline">
-                              {t('zoomHowToUse')} &rarr;
-                            </span>
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-
                   <AnimatePresence>
                     {showZoomSlider && (
                       <motion.div
@@ -584,19 +560,8 @@ export default function ExamInterface({
                         transition={{ duration: 0.18, ease: "easeOut" }}
                         className="absolute top-full left-0 mt-3 p-5 bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-3xl shadow-2xl z-50 w-72 md:w-80 origin-top-left text-left"
                       >
-                        {/* How to use banner */}
-                        <div className="mb-4 p-3 bg-[var(--context-box-bg)] border border-[var(--context-box-border)]/30 rounded-2xl">
-                          <div className="flex items-center gap-2 mb-1 text-xs font-bold text-[var(--text-primary)]">
-                            <Info className="w-3.5 h-3.5 text-[#3b82f6] dark:text-[#8AB4F8] shrink-0" />
-                            <span>{t('zoomHowToUse')}</span>
-                          </div>
-                          <p className="text-[11px] leading-relaxed text-[var(--text-secondary)] font-normal">
-                            {t('zoomInstructions')}
-                          </p>
-                        </div>
-
                         {/* Slider Controls */}
-                        <div className="flex items-center gap-3 mb-4">
+                        <div className="flex items-center gap-3">
                           <button 
                             onClick={() => setZoomLevel(prev => Math.max(0.6, parseFloat((prev - 0.1).toFixed(1))))} 
                             className="p-2 rounded-xl bg-[var(--bg-accent)] border border-[var(--border-color)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--card-hover)] transition-colors"
@@ -790,13 +755,15 @@ export default function ExamInterface({
                   </h2>
 
                   {/* Options */}
-                  <div className="space-y-3 md:space-y-4">
+                  <div className="space-y-3 md:space-y-4" role="group" aria-label={t('answerOptions')}>
                     {(currentQuestion?.options || []).map((option, index) => {
                       const isSelected = currentQuestion ? selectedAnswers[currentQuestion.id] === option : false;
                       const letter = String.fromCharCode(65 + index);
                       return (
                         <button
                           key={`${currentQuestion?.id ?? 'q'}-${index}`}
+                          type="button"
+                          aria-pressed={isSelected}
                           onClick={() => handleOptionSelect(option)}
                           className={`w-full flex items-center gap-4 p-4 md:p-5 min-h-[64px] rounded-2xl border-2 transition-all duration-200 ease-in-out text-left group break-words whitespace-normal shadow-xs ${
                             isSelected 

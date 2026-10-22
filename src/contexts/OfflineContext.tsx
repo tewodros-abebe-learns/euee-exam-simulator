@@ -143,9 +143,20 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       for (const item of queue) {
         if (item.type !== 'CREATE_EXAM') continue;
         try {
-          const exam = item.payload as OfflineExam;
+          const queuedExam = item.payload as OfflineExam;
           let uploaded = true;
-          if (exam?.id && exam.createdBy === currentAuthUser.uid) {
+          if (queuedExam?.id && queuedExam.createdBy === currentAuthUser.uid) {
+            // The queued payload is a snapshot from creation time, but the
+            // student may have renamed or moved the paper since (while offline
+            // those edits only touch the device copy). Upload the freshest
+            // record so the cloud copy is not born out of date.
+            let exam = queuedExam;
+            try {
+              const local = await offlineStorage.getExamById(queuedExam.id);
+              if (local) exam = { ...queuedExam, ...local };
+            } catch {
+              // Fall back to the queued snapshot.
+            }
             uploaded = await runWithTimeout(
               () =>
                 setDoc(doc(db, 'exams', exam.id), {
@@ -155,6 +166,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
                   questions: exam.questions,
                   createdBy: currentAuthUser.uid,
                   createdAt: serverTimestamp(),
+                  ...(exam.timeLimit ? { timeLimit: exam.timeLimit } : {}),
                 }),
               CLOUD_WRITE_TIMEOUT_MS,
               'Offline exam sync'

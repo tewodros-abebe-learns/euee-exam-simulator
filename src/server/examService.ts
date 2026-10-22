@@ -2,6 +2,11 @@ import crypto from "crypto";
 import { GoogleGenAI, Type } from "@google/genai";
 import { parseExamHeuristicallyDetailed } from "../lib/heuristicExamParser";
 import { normalizeExamData } from "../lib/examNormalizer";
+import {
+  validateExamRequest,
+  ConcurrencyLimiter,
+  type ExamRequest,
+} from "./requestValidation";
 
 // ==========================================
 // Security: In-Memory Sliding Window Rate Limiter
@@ -46,35 +51,66 @@ export function checkRateLimit(ip: string): boolean {
 interface CachedExam {
   data: any;
   createdAt: number;
+  /** Approximate size, so the cache is bounded by memory and not only by count. */
+  size: number;
 }
 const examCache = new Map<string, CachedExam>();
 const CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 const MAX_CACHE_ENTRIES = 100;
+// A full 100-entry cache of large papers used to be able to hold hundreds of
+// megabytes, which is an out-of-memory crash on a small container. The count
+// limit alone was not a real bound.
+const MAX_CACHE_CHARS = 8_000_000;
+let cachedChars = 0;
+
+function estimateSize(data: any): number {
+  try {
+    return JSON.stringify(data)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+function dropEntry(hash: string) {
+  const entry = examCache.get(hash);
+  if (!entry) return;
+  cachedChars -= entry.size;
+  examCache.delete(hash);
+}
 
 export function getCachedExam(hash: string): any | null {
   const entry = examCache.get(hash);
   if (!entry) return null;
   if (Date.now() - entry.createdAt > CACHE_TTL_MS) {
-    examCache.delete(hash);
+    dropEntry(hash);
     return null;
   }
   return entry.data;
 }
 
 export function setCachedExam(hash: string, data: any) {
-  if (examCache.size >= MAX_CACHE_ENTRIES) {
+  const size = estimateSize(data);
+  if (size > MAX_CACHE_CHARS) return; // never worth caching on its own
+
+  dropEntry(hash);
+  // Evict oldest entries until both the count and the memory budget fit.
+  while (examCache.size > 0 && (examCache.size >= MAX_CACHE_ENTRIES || cachedChars + size > MAX_CACHE_CHARS)) {
     const oldestKey = examCache.keys().next().value;
-    if (oldestKey) examCache.delete(oldestKey);
+    if (!oldestKey) break;
+    dropEntry(oldestKey);
   }
-  examCache.set(hash, { data, createdAt: Date.now() });
+
+  examCache.set(hash, { data, createdAt: Date.now(), size });
+  cachedChars += size;
 }
 
-export interface ExamRequestBody {
-  rawText?: string;
-  fileBase64?: string;
-  mimeType?: string;
-  fileName?: string;
-}
+export type ExamRequestBody = ExamRequest;
+
+/** How long a single generation may run before we give up honestly. */
+const GENERATION_DEADLINE_MS = 120_000;
+
+/** One client may have at most this many generations running at once. */
+const generationLimiter = new ConcurrencyLimiter(2);
 
 /**
  * Builds a response from the deterministic parser, but only when the parser is
@@ -94,7 +130,14 @@ function buildLocalFallback(trimmedText: string, fileName?: string): any | null 
   };
 }
 
-export async function processExamGeneration(body: ExamRequestBody, clientIp: string = 'unknown'): Promise<{ status: number; data: any }> {
+/**
+ * Runs one generation with a hard deadline and a per-client concurrency cap.
+ * A request that never finishes must not keep a slot (or the student) waiting.
+ */
+export async function processExamGeneration(
+  body: ExamRequestBody,
+  clientIp: string = 'unknown'
+): Promise<{ status: number; data: any }> {
   // 1. Rate Limiting Check
   if (!checkRateLimit(clientIp)) {
     return {
@@ -104,38 +147,74 @@ export async function processExamGeneration(body: ExamRequestBody, clientIp: str
   }
 
   // 2. Input Validation & Sanitization
-  const { rawText, fileBase64, mimeType, fileName } = body;
-  const hasText = rawText && typeof rawText === 'string' && rawText.trim().length > 0;
-  const hasFile = fileBase64 && typeof fileBase64 === 'string' && fileBase64.trim().length > 0;
+  const validation = validateExamRequest(body);
+  if (validation.ok === false) {
+    return { status: validation.status, data: { error: validation.error } };
+  }
 
-  if (!hasText && !hasFile) {
+  const { rawText, fileBase64, mimeType, fileName } = validation.body;
+  const hasText = typeof rawText === 'string' && rawText.length > 0;
+  const hasFile = typeof fileBase64 === 'string' && fileBase64.length > 0;
+  const trimmedText = rawText || "";
+
+  if (!generationLimiter.tryAcquire(clientIp)) {
     return {
-      status: 400,
-      data: { error: "No document text or file content provided to generate exam from." }
+      status: 429,
+      data: { error: "You already have an exam being processed. Please wait for it to finish." }
     };
   }
 
-  const trimmedText = hasText ? rawText.trim() : "";
-  const MAX_TEXT_LENGTH = 1000000; // 1MB text limit
-  if (trimmedText.length > MAX_TEXT_LENGTH) {
-    return {
-      status: 400,
-      data: { 
-        error: `Document text exceeds maximum size limit (${Math.round(trimmedText.length / 1000)}KB / ${Math.round(MAX_TEXT_LENGTH / 1000)}KB). Please upload a smaller section.` 
-      }
-    };
+  try {
+    return await withDeadline(
+      () => generateExamCore({ rawText, fileBase64, mimeType, fileName, hasText, hasFile, trimmedText }),
+      GENERATION_DEADLINE_MS
+    );
+  } finally {
+    generationLimiter.release(clientIp);
   }
+}
 
-  // Base64 inflates payloads by ~33%, so 20MB of base64 is ~15MB of file.
-  const MAX_BASE64_LENGTH = 20 * 1024 * 1024;
-  if (hasFile && fileBase64.length > MAX_BASE64_LENGTH) {
-    return {
-      status: 400,
-      data: {
-        error: "File upload size exceeds the 15MB limit. Please compress or split the document."
-      }
-    };
+/** Rejects (rather than hanging forever) when the work outlives its budget. */
+async function withDeadline(
+  work: () => Promise<{ status: number; data: any }>,
+  timeoutMs: number
+): Promise<{ status: number; data: any }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<{ status: number; data: any }>((resolve) => {
+      timer = setTimeout(
+        () =>
+          resolve({
+            status: 504,
+            data: {
+              error: 'This document is taking too long to process. Please try a smaller section.',
+              isBusy: true,
+            },
+          }),
+        timeoutMs
+      );
+    });
+    return await Promise.race([work(), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
+}
+
+async function generateExamCore({
+  fileBase64,
+  mimeType,
+  fileName,
+  hasFile,
+  trimmedText,
+}: {
+  rawText?: string;
+  fileBase64?: string;
+  mimeType?: string;
+  fileName?: string;
+  hasText: boolean;
+  hasFile: boolean;
+  trimmedText: string;
+}): Promise<{ status: number; data: any }> {
 
   // 3. Check Cache — the key covers the whole payload so two different
   // documents can never collide just because they share a length/prefix.

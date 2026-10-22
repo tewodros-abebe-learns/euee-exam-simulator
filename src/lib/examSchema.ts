@@ -68,7 +68,7 @@ export interface ImportReport {
   exam: ImportedExam | null;
   issues: ImportIssue[];
   stats: ImportStats;
-  format: 'json' | 'markdown';
+  format: 'json' | 'markdown' | 'csv';
 }
 
 export interface ImportDefaults {
@@ -314,10 +314,15 @@ export function parseExamJson(raw: string, defaults: ImportDefaults = {}): Impor
     const text = normalizeText(
       firstDefined(entry.question, entry.text, entry.stem, entry.prompt, entry.title, entry.q)
     );
-    const { options, flaggedCorrect } = normalizeOptions(
+    const { options: rawOptions, flaggedCorrect } = normalizeOptions(
       firstDefined(entry.options, entry.choices, entry.answers, entry.alternatives)
     );
-    const cleanedOptions = options.filter((option) => option.length > 0);
+    // Empty option cells are dropped, but an answer letter still refers to the
+    // position it was written at — otherwise "C" would silently grade "D".
+    const keptOptions = rawOptions
+      .map((option, position) => ({ option, position }))
+      .filter((entryOption) => entryOption.option.length > 0);
+    const cleanedOptions = keptOptions.map((entryOption) => entryOption.option);
 
     stats.total += 1;
 
@@ -336,12 +341,25 @@ export function parseExamJson(raw: string, defaults: ImportDefaults = {}): Impor
       return;
     }
 
-    let answerIndex = resolveAnswerIndex(entry, cleanedOptions, flaggedCorrect);
-    if (answerIndex === UNGRADED_ANSWER_INDEX) {
+    let rawAnswerIndex = resolveAnswerIndex(entry, rawOptions, flaggedCorrect);
+    if (rawAnswerIndex === UNGRADED_ANSWER_INDEX) {
       const mapped = firstDefined(topLevelKey[String(number)], topLevelKey[`q${number}`]);
       if (mapped !== undefined) {
-        answerIndex = resolveAnswerIndex({ correctAnswer: mapped }, cleanedOptions, null);
+        rawAnswerIndex = resolveAnswerIndex({ correctAnswer: mapped }, rawOptions, null);
       }
+    }
+    let answerIndex =
+      rawAnswerIndex >= 0
+        ? keptOptions.findIndex((entryOption) => entryOption.position === rawAnswerIndex)
+        : UNGRADED_ANSWER_INDEX;
+    if (rawAnswerIndex >= 0 && answerIndex === -1) {
+      // The key pointed at an option cell that is empty.
+      answerIndex = UNGRADED_ANSWER_INDEX;
+      issues.push({
+        level: 'warning',
+        message: 'The answer points at an empty option, so this question cannot be graded.',
+        questionNumber: number,
+      });
     }
 
     const duplicateOptions = cleanedOptions.filter(

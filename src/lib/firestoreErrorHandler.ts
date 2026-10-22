@@ -37,19 +37,22 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     errMessage.includes('Failed to get document because the client is offline') ||
     errMessage.includes('network');
 
+  // The identity fields are logged for debugging, but the student's email is
+  // personal data that has no business sitting in a browser console (or in a
+  // pasted bug report): only the provider names are kept.
   const errInfo: FirestoreErrorInfo = {
     error: errMessage,
     authInfo: {
       userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
+      email: auth.currentUser?.email ? '[redacted]' : null,
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
       providerInfo: auth.currentUser?.providerData.map(provider => ({
         providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
+        displayName: null,
+        email: null,
+        photoUrl: null
       })) || []
     },
     operationType,

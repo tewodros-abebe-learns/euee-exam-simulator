@@ -17,10 +17,17 @@ const PRECACHE_ASSETS = [
 // 1. Service Worker Install
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(PRECACHE_ASSETS).catch((err) => {
-        console.warn('Pre-cache item failed, will cache on demand:', err);
-      });
+    caches.open(CACHE_NAME).then(async (cache) => {
+      // Individually, not `addAll`: addAll rejects as a unit, so one missing
+      // icon would leave the offline shell uncached and the app unusable
+      // offline. A missing entry is simply fetched on demand later.
+      const results = await Promise.allSettled(
+        PRECACHE_ASSETS.map((asset) => cache.add(new Request(asset, { cache: 'reload' })))
+      );
+      const failed = results.filter((result) => result.status === 'rejected').length;
+      if (failed > 0) {
+        console.warn(`${failed} pre-cache item(s) unavailable; they will be cached on demand.`);
+      }
     }).then(() => self.skipWaiting())
   );
 });
@@ -36,7 +43,23 @@ self.addEventListener('activate', (event) => {
           }
         })
       );
-    }).then(() => self.clients.claim())
+    })
+      .then(() => self.clients.claim())
+      // Keep the cache from growing forever across releases: entries that no
+      // longer exist in the new build are dropped a moment after activation.
+      .then(async () => {
+        try {
+          const cache = await caches.open(CACHE_NAME);
+          const keys = await cache.keys();
+          const MAX_CACHED_ENTRIES = 120;
+          if (keys.length <= MAX_CACHED_ENTRIES) return;
+          for (const request of keys.slice(0, keys.length - MAX_CACHED_ENTRIES)) {
+            await cache.delete(request);
+          }
+        } catch (error) {
+          console.warn('Service worker cache prune skipped:', error);
+        }
+      })
   );
 });
 
@@ -72,14 +95,32 @@ self.addEventListener('fetch', (event) => {
           }
           return response;
         })
-        .catch(() => {
-          return caches.match('/index.html').then((cached) => cached || caches.match('/'));
+        .catch(async () => {
+          // Offline and nothing cached: still answer with something the browser
+          // can render instead of rejecting the navigation.
+          const cached = (await caches.match('/index.html')) || (await caches.match('/'));
+          return (
+            cached ||
+            new Response(
+              '<!doctype html><meta charset="utf-8"><title>Offline</title>' +
+                '<body style="font-family:system-ui;padding:2rem;text-align:center">' +
+                '<h1>You are offline</h1><p>Reconnect to open the app.</p></body>',
+              { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+            )
+          );
         })
     );
     return;
   }
 
-  // Static Assets (JS, CSS, Fonts, Images, KaTeX CDN): Stale-While-Revalidate
+  // Everything the app needs at runtime is same-origin (fonts and KaTeX CSS are
+  // bundled). Caching arbitrary third-party URLs let the cache grow without a
+  // limit and could pin a stale copy of someone else's asset; both are avoided.
+  if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  // Static Assets (JS, CSS, fonts, images): Stale-While-Revalidate
   event.respondWith(
     caches.match(request).then((cachedResponse) => {
       const fetchPromise = fetch(request)
@@ -93,11 +134,17 @@ self.addEventListener('fetch', (event) => {
           return networkResponse;
         })
         .catch(() => {
-          // Network failed; if we have cached response, return it, else fail gracefully
+          // Network failed; serve the cached copy when there is one.
           return cachedResponse;
         });
 
-      return cachedResponse || fetchPromise;
+      if (cachedResponse) return cachedResponse;
+
+      return fetchPromise.then(
+        (response) =>
+          response ||
+          new Response('', { status: 504, statusText: 'Offline' })
+      );
     })
   );
 });

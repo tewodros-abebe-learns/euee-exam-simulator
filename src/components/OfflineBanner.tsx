@@ -21,7 +21,11 @@ export default function OfflineBanner() {
     <>
       {/* 1. Permanent subtle offline bar when disconnected */}
       {!isOnline && (
-        <div className="bg-amber-500/10 border-b border-amber-500/20 text-amber-300 px-4 py-2 text-xs font-medium flex items-center justify-between sticky top-0 z-40 backdrop-blur-md">
+        <div
+          role="status"
+          aria-live="polite"
+          className="bg-amber-500/10 border-b border-amber-500/20 text-amber-300 px-4 py-2 text-xs font-medium flex items-center justify-between sticky top-0 z-40 backdrop-blur-md"
+        >
           <div className="flex items-center gap-2 max-w-2xl">
             <span className="flex h-2 w-2 relative">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
@@ -47,6 +51,8 @@ export default function OfflineBanner() {
       <AnimatePresence>
         {showOfflineToast && (
           <motion.div
+            role="status"
+            aria-live="polite"
             initial={{ opacity: 0, y: 50, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
@@ -75,6 +81,7 @@ export default function OfflineBanner() {
                   type="button"
                   onClick={() => triggerSync()}
                   disabled={isSyncing}
+                  aria-busy={isSyncing}
                   className="mt-2.5 px-3 py-1.5 rounded-lg bg-[#8AB4F8]/15 hover:bg-[#8AB4F8]/25 text-[#8AB4F8] border border-[#8AB4F8]/30 text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
@@ -86,6 +93,7 @@ export default function OfflineBanner() {
             <button
               type="button"
               onClick={dismissOfflineToast}
+              aria-label={t('dismiss')}
               className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] p-1 rounded-lg hover:bg-[var(--bg-accent)] transition-colors"
             >
               <X className="w-4 h-4" />
