@@ -97,6 +97,20 @@ export default function SubjectDetail({
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
 
+  // Escape closes whichever confirmation dialog is open, so a stray key press
+  // never traps the student inside a modal.
+  useEffect(() => {
+    if (!deletingExamId && !renamingExam && !movingExam) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (deletingExamId && !isDeleting) setDeletingExamId(null);
+      if (renamingExam && !isUpdating) setRenamingExam(null);
+      if (movingExam && !isUpdating) setMovingExam(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [deletingExamId, renamingExam, movingExam, isDeleting, isUpdating]);
+
   const { subjects: SUBJECTS } = useSubjects();
 
   const getSubjectName = (subj: string) => subjectDisplayName(subj, t);
@@ -763,7 +777,7 @@ export default function SubjectDetail({
       {/* Modals */}
       <AnimatePresence>
         {deletingExamId && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+          <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center px-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDeletingExamId(null)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-[var(--bg-secondary)] border border-[var(--border-color)] p-8 rounded-[32px] max-w-sm w-full shadow-2xl">
               <div className="bg-red-400/10 w-12 h-12 rounded-2xl flex items-center justify-center mb-6">
@@ -782,7 +796,7 @@ export default function SubjectDetail({
         )}
 
         {renamingExam && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+          <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center px-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setRenamingExam(null)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-[var(--bg-secondary)] border border-[var(--border-color)] p-8 rounded-[32px] max-w-md w-full shadow-2xl">
               <div className="bg-[#8AB4F8]/10 w-12 h-12 rounded-2xl flex items-center justify-center mb-6">
@@ -802,7 +816,7 @@ export default function SubjectDetail({
         )}
 
         {movingExam && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+          <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center px-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setMovingExam(null)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-[var(--bg-secondary)] border border-[var(--border-color)] p-8 rounded-[32px] max-w-md w-full shadow-2xl">
               <div className="bg-[#8AB4F8]/10 w-12 h-12 rounded-2xl flex items-center justify-center mb-6">
@@ -813,7 +827,7 @@ export default function SubjectDetail({
               
               <div className="space-y-6 mb-8">
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3 block">1. Select Subject</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3 block">{t('subjectLabel')}</label>
                   <div className="grid grid-cols-2 gap-2">
                     {SUBJECTS.map(subject => (
                       <button

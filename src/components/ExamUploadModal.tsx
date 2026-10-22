@@ -195,7 +195,7 @@ export default function ExamUploadModal({
       else if (source.text) await onProcessText(source.text, subject);
       onClose();
     } catch (err: any) {
-      setError(err?.message || 'Failed to process the document with AI.');
+      setError(err?.message || t('processFailed'));
     }
   };
 
@@ -229,7 +229,7 @@ export default function ExamUploadModal({
   const readLocalFile = async (file: File) => {
     setError('');
     if (file.size > MAX_IMPORT_BYTES) {
-      setError('That file is larger than 5MB — exam files are usually a few hundred KB.');
+      setError(t('fileTooLarge'));
       return;
     }
     setIsReadingFile(true);
@@ -237,7 +237,7 @@ export default function ExamUploadModal({
       const text = await file.text();
       importFromText(text, file.name, file);
     } catch (err: any) {
-      setError(err?.message || 'Could not read that file.');
+      setError(err?.message || t('fileUnreadable'));
     } finally {
       setIsReadingFile(false);
     }
@@ -274,7 +274,7 @@ export default function ExamUploadModal({
       await onUpload(file, subject);
       onClose();
     } catch (err: any) {
-      setError(err?.message || 'Failed to process document');
+      setError(err?.message || t('processFailed'));
     }
   };
 
@@ -294,7 +294,7 @@ export default function ExamUploadModal({
 
   const handlePasteSubmit = async () => {
     if (!pastedText.trim()) {
-      setError('Please paste your exam questions or markdown text.');
+      setError(t('pasteEmpty'));
       return;
     }
     setError('');
@@ -302,13 +302,13 @@ export default function ExamUploadModal({
       await onProcessText(pastedText, subject);
       onClose();
     } catch (err: any) {
-      setError(err?.message || 'Failed to process text');
+      setError(err?.message || t('processFailed'));
     }
   };
 
   const handlePasteImport = () => {
     if (!pastedText.trim()) {
-      setError('Please paste your exam questions or markdown text.');
+      setError(t('pasteEmpty'));
       return;
     }
     setError('');
@@ -348,9 +348,18 @@ export default function ExamUploadModal({
         // quietly once the write lands, so there is exactly one copy.
         setImportPending(true);
         setError(err?.message || t('importStillWorking'));
-        void saving.then(() => onClose()).catch(() => setImportPending(false));
+        void saving
+          .then(() => onClose())
+          .catch(() => {
+            // The save failed after the timeout: unlock the button so the
+            // student can retry instead of staring at a dead control.
+            importInFlightRef.current = false;
+            setIsImporting(false);
+            setImportPending(false);
+            setError(t('importFailed'));
+          });
       } else {
-        setError(err?.message || 'Could not add the exam.');
+        setError(err?.message || t('importFailed'));
       }
     } finally {
       if (guard) clearTimeout(guard);

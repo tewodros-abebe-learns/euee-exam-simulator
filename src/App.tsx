@@ -472,7 +472,7 @@ function AppContent() {
       });
     } catch (e: any) {
       console.error(e);
-      setErrorMessage(e?.message || "Error reading uploaded file");
+      setErrorMessage(e?.message || t('fileReadError'));
     }
   };
 
@@ -623,7 +623,7 @@ function AppContent() {
 
   const handleSelectExam = (exam: any) => {
     if (!exam || !exam.questions || exam.questions.length === 0) {
-      setErrorMessage("Selected exam contains no valid questions.");
+      setErrorMessage(t('emptyExamError'));
       return;
     }
     setExamQuestions(exam.questions);
@@ -658,9 +658,7 @@ function AppContent() {
     if (session?.timeLimit > 0) {
       const remaining = session.timeLimit - Math.floor((Date.now() - (session.startTime || Date.now())) / 1000);
       if (remaining <= 0) {
-        setErrorMessage(
-          'The time limit for that session has already ended, so it has been graded with the answers you saved.'
-        );
+        setErrorMessage(t('sessionEndedNotice'));
         const graded = gradeExam(exam.questions || [], session.answers || {});
         setLastResult({
           score: graded.correct,

@@ -274,6 +274,17 @@ export default function ExamInterface({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeLeft, isUntimed]);
 
+  // The countdown itself updates every second, so it must never be a live
+  // region — screen readers would interrupt the student endlessly. Only the
+  // milestones are spoken.
+  const [timeNotice, setTimeNotice] = useState('');
+  useEffect(() => {
+    if (isUntimed) return;
+    if (timeLeft === 300) setTimeNotice(t('fiveMinutesLeft'));
+    else if (timeLeft === 60) setTimeNotice(t('oneMinuteLeft'));
+    else if (timeLeft === 0) setTimeNotice(t('timeUp'));
+  }, [timeLeft, isUntimed, t]);
+
   const formatTime = formatClock;
 
   const handleOptionSelect = (option: string) => {
@@ -673,13 +684,14 @@ export default function ExamInterface({
                 <div
                   className="flex items-center gap-2 bg-[var(--bg-secondary)] border border-[var(--border-color)] px-3 sm:px-4 py-2 rounded-2xl shadow-xs"
                   role="timer"
-                  aria-live={isWarningTime ? 'assertive' : 'off'}
+                  aria-live="off"
                 >
                   <Clock className={`w-4 h-4 ${isWarningTime ? 'text-red-500 animate-pulse' : 'text-[#3b82f6] dark:text-[#8AB4F8]'}`} />
                   <span className={`font-mono text-xs sm:text-sm font-bold ${isWarningTime ? 'text-red-500' : 'text-[var(--text-primary)]'}`}>
                     {isUntimed ? t('untimed') : formatTime(timeLeft)}
                   </span>
                 </div>
+                <span className="sr-only" role="status" aria-live="polite">{timeNotice}</span>
               </div>
             </div>
 
@@ -774,7 +786,7 @@ export default function ExamInterface({
 
                   {/* Question Heading */}
                   <h2 className="text-xl md:text-2xl font-bold text-[var(--text-primary)] mb-6 md:mb-8 leading-snug tracking-tight whitespace-pre-wrap">
-                    <LatexText text={currentQuestion?.question || 'Question content unavailable.'} />
+                    <LatexText text={currentQuestion?.question || t('questionUnavailable')} />
                   </h2>
 
                   {/* Options */}
