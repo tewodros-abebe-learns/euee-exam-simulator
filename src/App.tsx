@@ -855,7 +855,19 @@ function AppContent() {
                   setView('DASHBOARD');
                 }
               }}
-              onReset={() => setView('DASHBOARD')}
+              onReset={() => {
+                // Leaving the summary must not leave a stale paper behind: a
+                // later retake would otherwise inherit its id and answers.
+                setOriginalExam(null);
+                setExamQuestions([]);
+                setUserAnswers({});
+                setLastResult(null);
+                setCurrentExamId(null);
+                setCurrentSessionId(null);
+                setTimeLimit(null);
+                setStartTime(null);
+                setView('DASHBOARD');
+              }}
             />
           )}
         </AnimatePresence>
