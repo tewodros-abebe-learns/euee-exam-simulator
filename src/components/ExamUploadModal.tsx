@@ -72,6 +72,12 @@ const formatById = (id: ExamFormat): FormatOption => FORMATS.find((f) => f.id ==
 const LOCAL_FORMATS = FORMATS.filter((f) => f.route === 'local');
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+/**
+ * Pasted text had no bound at all: a multi-megabyte paste (or a stray binary
+ * copied into the box) blocked the main thread inside the parser and could
+ * freeze the tab. Two million characters is far more than any real paper.
+ */
+const MAX_PASTE_CHARS = 2_000_000;
 const IMPORT_CONFIRM_TIMEOUT_MS = 15000;
 
 function downloadText(filename: string, content: string, mime: string) {
@@ -299,6 +305,10 @@ export default function ExamUploadModal({
       setError(t('pasteEmpty'));
       return;
     }
+    if (pastedText.length > MAX_PASTE_CHARS) {
+      setError(t('pasteTooLong'));
+      return;
+    }
     setError('');
     try {
       await onProcessText(pastedText, subject);
@@ -311,6 +321,10 @@ export default function ExamUploadModal({
   const handlePasteImport = () => {
     if (!pastedText.trim()) {
       setError(t('pasteEmpty'));
+      return;
+    }
+    if (pastedText.length > MAX_PASTE_CHARS) {
+      setError(t('pasteTooLong'));
       return;
     }
     setError('');

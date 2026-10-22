@@ -181,10 +181,12 @@ export default function ExamInterface({
       // Never hijack browser/system shortcuts (Ctrl+F, Cmd+A, Alt+← …).
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
+      // Papers can carry up to ten options, so the shortcuts cover A–J and 1–9
+      // instead of silently ignoring options F onwards.
       const key = e.key.toUpperCase();
-      const optionIndex = /^[A-E]$/.test(key)
+      const optionIndex = /^[A-J]$/.test(key)
         ? key.charCodeAt(0) - 65
-        : /^[1-5]$/.test(key)
+        : /^[1-9]$/.test(key)
           ? Number(key) - 1
           : -1;
       if (optionIndex >= 0) {
@@ -753,13 +755,15 @@ export default function ExamInterface({
                   </h2>
 
                   {/* Options */}
-                  <div className="space-y-3 md:space-y-4">
+                  <div className="space-y-3 md:space-y-4" role="group" aria-label={t('answerOptions')}>
                     {(currentQuestion?.options || []).map((option, index) => {
                       const isSelected = currentQuestion ? selectedAnswers[currentQuestion.id] === option : false;
                       const letter = String.fromCharCode(65 + index);
                       return (
                         <button
                           key={`${currentQuestion?.id ?? 'q'}-${index}`}
+                          type="button"
+                          aria-pressed={isSelected}
                           onClick={() => handleOptionSelect(option)}
                           className={`w-full flex items-center gap-4 p-4 md:p-5 min-h-[64px] rounded-2xl border-2 transition-all duration-200 ease-in-out text-left group break-words whitespace-normal shadow-xs ${
                             isSelected 
