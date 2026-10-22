@@ -452,7 +452,7 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelec
                   </div>
                   <div>
                     <h3 className="text-xl font-bold text-[var(--text-primary)]">{getSubjectName(subject)}</h3>
-                    <p className="text-sm text-[var(--text-secondary)]">{subjectExams.length} Exams</p>
+                    <p className="text-sm text-[var(--text-secondary)]">{t('examsAvailable', { count: subjectExams.length })}</p>
                   </div>
                 </div>
                 <ChevronRight className={`w-5 h-5 text-gray-600 group-hover:text-[#8AB4F8] transition-all`} />
