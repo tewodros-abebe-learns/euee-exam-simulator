@@ -1,13 +1,21 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, type ReactNode } from 'react';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut,
   createUserWithEmailAndPassword,
   updateProfile,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   type User as FirebaseUser,
 } from 'firebase/auth';
 import { auth } from '../firebase';
+import {
+  friendlyAuthError,
+  isUserCancelledError,
+} from '../lib/authErrors';
 
 export interface User {
   email: string | null;
@@ -20,10 +28,14 @@ interface AuthContextType {
   currentUser: User | null;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string, name: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
   isLoading: boolean;
   isInitializing: boolean;
   isFirebaseAuthed: boolean;
+  /** Set when a Google redirect came back with an error we could not show inline. */
+  authError: string | null;
+  clearAuthError: () => void;
 }
 
 /**
@@ -63,6 +75,16 @@ function setStoredSession(user: User | null) {
   }
 }
 
+/**
+ * The cached profile is only a fallback for *offline* rendering of the same
+ * account. Reusing it for a different uid would show one student's name and
+ * photo to another, so the uid has to match.
+ */
+function matchingFallback(firebaseUser: FirebaseUser): User | null {
+  const cached = getStoredSession();
+  return cached && cached.uid === firebaseUser.uid ? cached : null;
+}
+
 function toUser(firebaseUser: FirebaseUser, fallback?: User | null): User {
   const email = firebaseUser.email || fallback?.email || null;
   return {
@@ -76,35 +98,22 @@ function toUser(firebaseUser: FirebaseUser, fallback?: User | null): User {
   };
 }
 
-/** Translates Firebase error codes into actionable, non-leaky messages. */
-function friendlyAuthError(error: any): string {
-  const code = error?.code as string | undefined;
-  switch (code) {
-    case 'auth/invalid-email':
-      return 'Please enter a valid email address.';
-    case 'auth/missing-password':
-      return 'Please enter your password.';
-    case 'auth/wrong-password':
-    case 'auth/invalid-credential':
-    case 'auth/user-not-found':
-      return 'Incorrect email or password. Please try again.';
-    case 'auth/email-already-in-use':
-      return 'This email is already registered. Please sign in instead.';
-    case 'auth/weak-password':
-      return 'Password must be at least 6 characters.';
-    case 'auth/too-many-requests':
-      return 'Too many attempts. Please wait a few minutes and try again.';
-    case 'auth/network-request-failed':
-      return 'You appear to be offline. Connect to the internet to sign in, or continue as a guest.';
-    case 'auth/operation-not-allowed':
-      return 'Email sign-in is not enabled for this deployment. You can continue as a guest, or ask the administrator to enable Email/Password authentication.';
-    case 'auth/unauthorized-domain':
-      return 'This domain is not authorised for sign-in. Please contact the administrator.';
-    case 'auth/user-disabled':
-      return 'This account has been disabled.';
-    default:
-      return error?.message || 'Authentication failed. Please try again.';
+/** Pop-ups are unusable when the page is running inside an iframe preview. */
+function isEmbeddedFrame(): boolean {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
   }
+}
+
+/** Installed PWAs have no reliable pop-up return path, so they redirect. */
+function isStandaloneApp(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.matchMedia?.('(display-mode: standalone)').matches === true ||
+    (window.navigator as any).standalone === true
+  );
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -114,12 +123,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isFirebaseAuthed, setIsFirebaseAuthed] = useState<boolean>(() => !!auth.currentUser);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  // Guards against a double click opening two pop-ups.
+  const inFlightRef = useRef(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser: FirebaseUser | null) => {
       if (firebaseUser) {
         setIsFirebaseAuthed(true);
-        const user = toUser(firebaseUser, getStoredSession());
+        const user = toUser(firebaseUser, matchingFallback(firebaseUser));
         setCurrentUser(user);
         setStoredSession(user);
       } else {
@@ -135,6 +147,85 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, []);
 
+  // A redirect-based Google sign-in lands back on this page; pick up the
+  // credential (or the error) once, before the user does anything else.
+  useEffect(() => {
+    let cancelled = false;
+    getRedirectResult(auth)
+      .then((result) => {
+        if (cancelled || !result?.user) return;
+        // onAuthStateChanged already stores the profile; nothing else to do.
+      })
+      .catch((error: any) => {
+        if (cancelled) return;
+        // A cancelled redirect is not an error worth showing.
+        if (isUserCancelledError(error)) return;
+        setAuthError(friendlyAuthError(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loginWithGoogle = async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setIsActionLoading(true);
+    setAuthError(null);
+
+    const provider = new GoogleAuthProvider();
+    // Always let the student pick which Google account to use.
+    provider.setCustomParameters({ prompt: 'select_account' });
+
+    try {
+      if (isStandaloneApp()) {
+        // Installed apps cannot return from a pop-up; the redirect flow comes
+        // back to the app window instead.
+        await signInWithRedirect(auth, provider);
+        return;
+      }
+
+      try {
+        const credential = await signInWithPopup(auth, provider);
+        const user = toUser(credential.user, matchingFallback(credential.user));
+        setCurrentUser(user);
+        setStoredSession(user);
+      } catch (popupError: any) {
+        const code = popupError?.code as string | undefined;
+        if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+          // Pop-up was blocked but we are not in a frame: the redirect flow
+          // works just as well and needs no user action.
+          if (isEmbeddedFrame()) throw popupError;
+          await signInWithRedirect(auth, provider);
+          return;
+        }
+        throw popupError;
+      }
+    } catch (error: any) {
+      const code = error?.code as string | undefined;
+      if (isUserCancelledError(error)) {
+        // The student changed their mind: no error banner.
+        return;
+      }
+      // A preview iframe can block the popup without reporting a useful code.
+      if (
+        isEmbeddedFrame() &&
+        (code === 'auth/popup-blocked' ||
+          code === 'auth/operation-not-supported-in-this-environment' ||
+          code === 'auth/internal-error' ||
+          code === 'auth/web-storage-unsupported')
+      ) {
+        throw new Error(
+          'Google sign-in needs its own window. Open the app in a new tab and try again, or sign in with your email and password.'
+        );
+      }
+      throw new Error(friendlyAuthError(error));
+    } finally {
+      inFlightRef.current = false;
+      setIsActionLoading(false);
+    }
+  };
+
   const login = async (emailInput: string, passwordInput: string) => {
     const email = emailInput.trim().toLowerCase();
     const password = passwordInput.trim();
@@ -145,7 +236,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsActionLoading(true);
     try {
       const credential = await signInWithEmailAndPassword(auth, email, password);
-      const user = toUser(credential.user, getStoredSession());
+      const user = toUser(credential.user, matchingFallback(credential.user));
       setCurrentUser(user);
       setStoredSession(user);
     } catch (error: any) {
@@ -201,10 +292,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         currentUser,
         login,
         signup,
+        loginWithGoogle,
         logout,
         isLoading: isInitializing || isActionLoading,
         isInitializing,
         isFirebaseAuthed,
+        authError,
+        clearAuthError: () => setAuthError(null),
       }}
     >
       {children}

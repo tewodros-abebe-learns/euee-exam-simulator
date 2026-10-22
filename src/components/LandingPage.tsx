@@ -22,7 +22,9 @@ import { motion, AnimatePresence } from "motion/react";
 import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
 import FeatureCard from "./FeatureCard";
-import { SUBJECTS, subjectLabelKey } from "../lib/subjects";
+import GoogleIcon from "./GoogleIcon";
+import { subjectDisplayName } from "../lib/subjects";
+import { useSubjects } from "../lib/subjectStore";
 import { SUPPORTED_UPLOAD_EXTENSIONS } from '../lib/fileParser';
 
 interface LandingPageProps {
@@ -47,18 +49,19 @@ export default function LandingPage({
 }: LandingPageProps) {
   const { t } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { login, signup, isLoading } = useAuth();
+  const { login, signup, loginWithGoogle, isLoading, authError, clearAuthError } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState("");
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [selectedSubject, setSelectedSubject] = useState<string>("General");
   const [inputMethod, setInputMethod] = useState<"file" | "paste">("file");
   const [pastedText, setPastedText] = useState("");
 
-  const subjects = SUBJECTS;
+  const { subjects } = useSubjects();
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -96,6 +99,21 @@ export default function LandingPage({
       setError(err.message || "Authentication failed");
     }
   };
+  const handleGoogleSignIn = async () => {
+    if (isGoogleLoading || isLoading) return;
+    setError("");
+    clearAuthError();
+    setIsGoogleLoading(true);
+    try {
+      await loginWithGoogle();
+      // On success the auth listener swaps this card for the upload view.
+    } catch (err: any) {
+      setError(err?.message || "Google sign-in failed. Please try again.");
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
+
   const handleDragOver = (e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -157,9 +175,9 @@ export default function LandingPage({
                   </p>
                 </div>
 
-                {error && (
+                {(error || authError) && (
                   <div className="bg-red-400/10 border border-red-400/20 text-red-400 text-xs p-3 rounded-xl mb-4 text-center">
-                    <p>{error}</p>
+                    <p>{error || authError}</p>
                     {typeof window !== 'undefined' && window.self !== window.top && (
                       <div className="mt-2 pt-2 border-t border-red-400/20">
                         <a
@@ -175,6 +193,29 @@ export default function LandingPage({
                     )}
                   </div>
                 )}
+
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  disabled={isLoading || isGoogleLoading}
+                  aria-busy={isGoogleLoading}
+                  className="w-full bg-white hover:bg-gray-50 text-gray-800 border border-gray-300 font-bold py-2.5 rounded-xl transition-all flex items-center justify-center gap-2.5 disabled:opacity-60 disabled:cursor-not-allowed text-sm shadow-xs cursor-pointer"
+                >
+                  {isGoogleLoading ? (
+                    <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
+                  ) : (
+                    <GoogleIcon className="w-5 h-5" />
+                  )}
+                  <span>{t('googleSignIn')}</span>
+                </button>
+
+                <div className="flex items-center gap-3 my-4" aria-hidden="true">
+                  <span className="h-px flex-1 bg-[var(--border-color)]" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-secondary)]">
+                    {t('orUseEmail')}
+                  </span>
+                  <span className="h-px flex-1 bg-[var(--border-color)]" />
+                </div>
 
                 <form onSubmit={handleSubmit} className="space-y-3">
                   {isSignUp && (
@@ -262,7 +303,11 @@ export default function LandingPage({
 
                 <div className="mt-6 text-center">
                   <button
-                    onClick={() => setIsSignUp(!isSignUp)}
+                    onClick={() => {
+                      setIsSignUp(!isSignUp);
+                      setError("");
+                      clearAuthError();
+                    }}
                     className="text-sm text-[var(--text-secondary)] hover:text-[#8AB4F8] transition-colors"
                   >
                     {isSignUp
@@ -334,7 +379,7 @@ export default function LandingPage({
                             : "bg-[var(--bg-secondary)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-gray-500"
                         }`}
                       >
-                        {t(subjectLabelKey(subject))}
+                        {subjectDisplayName(subject, t)}
                       </button>
                     ))}
                   </div>

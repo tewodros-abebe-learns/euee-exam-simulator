@@ -9,7 +9,8 @@ import { FileText, Timer, CheckCircle2, Play, Trash2, Clock, Plus, Loader2, Key,
 import ExamUploadModal from './ExamUploadModal';
 import type { ImportedExam } from '../lib/examSchema';
 import { offlineStorage } from '../lib/offlineStorage';
-import { SUBJECTS, GRADES, matchesSubject, normalizeSubject, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
+import { GRADES, gradeLabelKey, subjectDisplayName } from '../lib/subjects';
+import { useSubjects, subjectMatchesFolder } from '../lib/subjectStore';
 
 interface Exam {
   id: string;
@@ -53,6 +54,7 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelec
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const { subjects: folderSubjects } = useSubjects();
   
   // Modals state
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -61,7 +63,6 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelec
   const [movingExam, setMovingExam] = useState<Exam | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [newSubject, setNewSubject] = useState('');
-  const [newGrade, setNewGrade] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
 
@@ -207,13 +208,17 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelec
 
   const examsBySubject = useMemo(() => {
     const map: Record<string, Exam[]> = {};
-    SUBJECTS.forEach(sub => map[sub] = []);
+    folderSubjects.forEach(sub => map[sub] = []);
     filteredExams.forEach(exam => {
-      const folder = normalizeSubject(exam.subject);
+      // Known subject → its own folder; anything else lands in General.
+      const folder =
+        folderSubjects.find((sub) => sub !== 'General' && subjectMatchesFolder(exam.subject, sub)) ||
+        'General';
       if (map[folder]) map[folder].push(exam);
+      else map[folder] = [exam];
     });
     return map;
-  }, [filteredExams]);
+  }, [filteredExams, folderSubjects]);
 
   const recentResults = useMemo(() => {
     return userExams
@@ -256,7 +261,6 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelec
   const handleMoveExam = (exam: any) => {
     setMovingExam(exam);
     setNewSubject(exam.subject);
-    setNewGrade(exam.grade || 'General');
   };
 
   const confirmRename = async () => {
@@ -285,22 +289,21 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelec
   };
 
   const confirmMove = async () => {
-    if (!movingExam || !newSubject || !newGrade) return;
+    if (!movingExam || !newSubject) return;
     setIsUpdating(true);
     const path = `exams/${movingExam.id}`;
     try {
       if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !movingExam.id.startsWith('local_')) {
         await updateDoc(doc(db, 'exams', movingExam.id), {
           subject: newSubject,
-          grade: newGrade
         });
       }
       // Also update in offline storage
       const cached = await offlineStorage.getExamById(movingExam.id);
       if (cached) {
-        await offlineStorage.saveExam({ ...cached, subject: newSubject, grade: newGrade });
+        await offlineStorage.saveExam({ ...cached, subject: newSubject });
       }
-      setExams(prev => prev.map(e => e.id === movingExam.id ? { ...e, subject: newSubject, grade: newGrade } : e));
+      setExams(prev => prev.map(e => e.id === movingExam.id ? { ...e, subject: newSubject } : e));
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
     } finally {
@@ -351,7 +354,7 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelec
     }
   };
 
-  const getSubjectName = (subj: string) => t(subjectLabelKey(subj));
+  const getSubjectName = (subj: string) => subjectDisplayName(subj, t);
   const getGradeName = (grd: string) => t(gradeLabelKey(grd));
 
   if (loading) {
@@ -437,8 +440,8 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelec
 
       {/* Subject Folders Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {SUBJECTS.map((subject) => {
-          const subjectExams = exams.filter(exam => matchesSubject(exam.subject, subject));
+        {folderSubjects.map((subject) => {
+          const subjectExams = examsBySubject[subject] ?? [];
 
           return (
             <div key={subject} className="flex flex-col gap-4">
@@ -452,7 +455,7 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelec
                   </div>
                   <div>
                     <h3 className="text-xl font-bold text-[var(--text-primary)]">{getSubjectName(subject)}</h3>
-                    <p className="text-sm text-[var(--text-secondary)]">{subjectExams.length} Exams</p>
+                    <p className="text-sm text-[var(--text-secondary)]">{t('examsAvailable', { count: subjectExams.length })}</p>
                   </div>
                 </div>
                 <ChevronRight className={`w-5 h-5 text-gray-600 group-hover:text-[#8AB4F8] transition-all`} />
@@ -536,7 +539,7 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelec
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3 block">1. Select Subject</label>
                   <div className="grid grid-cols-2 gap-2">
-                    {SUBJECTS.map(subject => (
+                    {folderSubjects.map(subject => (
                       <button
                         key={subject}
                         onClick={() => setNewSubject(subject)}
@@ -552,29 +555,11 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onSelec
                   </div>
                 </div>
 
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3 block">2. Select Grade</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {GRADES.map(grade => (
-                      <button
-                        key={grade}
-                        onClick={() => setNewGrade(grade)}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
-                          newGrade === grade 
-                            ? 'bg-[#8AB4F8] text-gray-900 border-[#8AB4F8]' 
-                            : 'bg-[var(--bg-accent)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-gray-600'
-                        }`}
-                      >
-                        {getGradeName(grade)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
+                              </div>
 
               <div className="flex gap-3">
                 <button onClick={() => setMovingExam(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
-                <button onClick={confirmMove} disabled={isUpdating || !newSubject || !newGrade} className="flex-1 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+                <button onClick={confirmMove} disabled={isUpdating || !newSubject} className="flex-1 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
                   {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : t('move')}
                 </button>
               </div>

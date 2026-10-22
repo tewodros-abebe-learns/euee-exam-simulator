@@ -1,7 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Languages, Sun, Moon, Check, User, Sparkles, LogIn, X } from 'lucide-react';
+import { Languages, Sun, Moon, Check, User, Sparkles, LogIn, X, Loader2 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useAuth } from '../contexts/AuthContext';
+import GoogleIcon from './GoogleIcon';
 import { Language } from '../i18n/translations';
 
 interface InitialSetupModalProps {
@@ -27,6 +29,23 @@ export default function InitialSetupModal({
   onClose,
 }: InitialSetupModalProps) {
   const { language, setLanguage, t } = useLanguage();
+  const { loginWithGoogle, isLoading } = useAuth();
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [googleError, setGoogleError] = useState('');
+
+  const handleGoogle = async () => {
+    if (isGoogleLoading || isLoading) return;
+    setGoogleError('');
+    setIsGoogleLoading(true);
+    try {
+      await loginWithGoogle();
+      // The auth listener closes this modal and opens the dashboard.
+    } catch (err: any) {
+      setGoogleError(err?.message || 'Google sign-in failed. Please try again.');
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
   
   // Prevent background scrolling when modal is open
   useEffect(() => {
@@ -213,8 +232,30 @@ export default function InitialSetupModal({
         </div>
 
 
-        {/* 3. Action Buttons: Continue as Guest vs Email Sign In */}
+        {/* 3. Action Buttons: Google, Guest, or Email */}
         <div className="space-y-2.5 pt-2 border-t border-[var(--border-color)]">
+          {googleError && (
+            <p className="text-[11px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-xl p-2.5 text-center leading-relaxed">
+              {googleError}
+            </p>
+          )}
+
+          {/* Google Sign In */}
+          <button
+            type="button"
+            onClick={handleGoogle}
+            disabled={isLoading || isGoogleLoading}
+            aria-busy={isGoogleLoading}
+            className="w-full bg-white hover:bg-gray-50 text-gray-800 border border-gray-300 font-bold py-2.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 text-xs shadow-xs disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+          >
+            {isGoogleLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
+            ) : (
+              <GoogleIcon className="w-4 h-4" />
+            )}
+            <span>{t('googleSignIn')}</span>
+          </button>
+
           {/* Continue as Guest Button */}
           <button
             type="button"

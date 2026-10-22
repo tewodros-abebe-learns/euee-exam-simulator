@@ -13,13 +13,15 @@ import TimerSelection from './components/TimerSelection';
 import InitialSetupModal from './components/InitialSetupModal';
 import OfflineBanner from './components/OfflineBanner';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { runWithTimeout, CRITICAL_WRITE_TIMEOUT_MS, LOCAL_WRITE_TIMEOUT_MS } from './lib/cloudWrite';
+import { prepareExamQuestions } from './lib/examQuality';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { OfflineProvider, useOffline } from './contexts/OfflineContext';
 import { generateExamFromDocument, type Question } from './services/geminiService';
 import { readFileAsBase64, extractTextFromFile, assertSupportedUpload, getFileExtension, isLocalImportFile } from './lib/fileParser';
 
 import { db, auth } from './firebase';
-import { collection, addDoc, serverTimestamp, doc, getDocs, query, where, setDoc } from 'firebase/firestore';
+import { collection, serverTimestamp, doc, getDocs, query, where, setDoc } from 'firebase/firestore';
 import { offlineStorage } from './lib/offlineStorage';
 import { gradeExam } from './lib/scoring';
 import { parseExamText } from './lib/examImport';
@@ -53,8 +55,8 @@ function AppContent() {
   const [originalExam, setOriginalExam] = useState<any | null>(null);
   const [lastResult, setLastResult] = useState<{ score: number; total: number; percentage: number; duration: number; completedAt: number } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const { currentUser, logout, isInitializing: authLoading, isFirebaseAuthed } = useAuth();
-  const { saveExamLocally, saveSessionLocally, isOnline } = useOffline();
+  const { currentUser, logout, loginWithGoogle, isInitializing: authLoading, isFirebaseAuthed } = useAuth();
+  const { saveExamLocally, saveSessionLocally, queueExamForSync, isOnline } = useOffline();
 
   const [isGuestMode, setIsGuestMode] = useState(() => localStorage.getItem('onboarded') === 'true');
   const { t } = useLanguage();
@@ -68,6 +70,9 @@ function AppContent() {
   useEffect(() => {
     if (currentUser) {
       setShowOnboarding(false);
+      // Signing in (by any method, including Google) ends guest mode, so the
+      // dashboard is no longer limited to device-only data.
+      setIsGuestMode(false);
       localStorage.setItem('euee_initial_setup_completed', 'true');
       localStorage.setItem('onboarded', 'true');
     }
@@ -252,6 +257,71 @@ function AppContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.uid, isFirebaseAuthed, isOnline]);
 
+  /**
+   * Local-first exam persistence.
+   *
+   * The id is generated on the device (a Firestore doc id when the student is
+   * signed in, so the local copy and the cloud copy share one id). The local
+   * save is awaited because IndexedDB is fast and it is what the next screen
+   * reads; the cloud write runs in the background with a timeout, so a slow or
+   * unreachable backend can never leave the UI stuck on a spinner.
+   */
+  const persistNewExam = async (examData: {
+    title: string;
+    subject: string;
+    grade: string;
+    questions: any[];
+    createdBy: string;
+    createdAt: number;
+    source: 'custom';
+    timeLimit?: number;
+  }): Promise<string> => {
+    const canWriteCloud =
+      Boolean(currentUser) &&
+      isOnline &&
+      isFirebaseAuthed &&
+      Boolean(auth.currentUser) &&
+      auth.currentUser!.uid === currentUser!.uid;
+
+    const examRef = canWriteCloud ? doc(collection(db, 'exams')) : null;
+    const examId = examRef?.id || `exam_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+    setCurrentExamId(examId);
+    setOriginalExam({ ...examData, id: examId });
+
+    // IndexedDB is normally instant; bound it anyway so a blocked database
+    // cannot stop the student from starting the exam.
+    await runWithTimeout(
+      () => saveExamLocally({ id: examId, ...examData }),
+      LOCAL_WRITE_TIMEOUT_MS,
+      'Local exam save'
+    );
+
+    if (examRef) {
+      const ref = examRef;
+      // Fire and forget: navigation must not wait for the network.
+      void (async () => {
+        const saved = await runWithTimeout(() =>
+          setDoc(ref, {
+            title: examData.title,
+            subject: examData.subject,
+            grade: examData.grade,
+            questions: examData.questions,
+            createdBy: examData.createdBy,
+            createdAt: serverTimestamp(),
+            ...(examData.timeLimit ? { timeLimit: examData.timeLimit } : {}),
+          })
+        );
+        if (!saved) {
+          // Replay it when the connection comes back instead of losing it.
+          await queueExamForSync({ id: examId, ...examData });
+        }
+      })();
+    }
+
+    return examId;
+  };
+
   const processExamContent = async (options: {
     rawText?: string;
     fileBase64?: string;
@@ -276,49 +346,33 @@ function AppContent() {
         : (options.fileName ? options.fileName.replace(/\.[^/.]+$/, '') : `${options.subject}${options.grade ? ` - Grade ${options.grade}` : ''}`);
       const computedTitle = rawTitle.trim() || 'Custom Exam';
 
+      const prepared = prepareExamQuestions(result.questions);
+      if (prepared.questions.length === 0) {
+        throw new Error(
+          'The document was read but produced no usable multiple-choice questions. Each question needs a stem and at least two options.'
+        );
+      }
+      if (prepared.dropped > 0) {
+        console.warn(`Dropped ${prepared.dropped} unusable question(s) from the AI result.`);
+      }
+
       if (result.warning) setErrorMessage(result.warning);
-      setExamQuestions(result.questions);
+      setExamQuestions(prepared.questions);
       setExamTitle(computedTitle);
       setSelectedGrade(options.grade || 'General');
       setRecommendedTimeLimit(null);
       setCurrentSessionId(null);
 
-      // Auto-save uploaded & analyzed exam immediately by default
-      const newExamId = `exam_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-      const examData = {
+      // Local-first: the exam appears immediately, the cloud copy follows.
+      await persistNewExam({
         title: computedTitle,
         subject: options.subject || 'General',
         grade: options.grade || 'General',
-        questions: result.questions,
+        questions: prepared.questions,
         createdBy: currentUser?.uid || 'guest',
         createdAt: Date.now(),
-        source: 'custom' as const
-      };
-      setOriginalExam({ ...examData, id: newExamId });
-
-      if (currentUser && isOnline && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid) {
-        try {
-          const docRef = await addDoc(collection(db, 'exams'), {
-            title: examData.title,
-            subject: examData.subject,
-            grade: examData.grade,
-            questions: examData.questions,
-            createdBy: currentUser.uid,
-            createdAt: serverTimestamp()
-          });
-          setCurrentExamId(docRef.id);
-          setOriginalExam((prev: any) => (prev ? { ...prev, id: docRef.id } : prev));
-          await saveExamLocally({ id: docRef.id, ...examData });
-        } catch(e) {
-          console.warn("Could not save exam to Firestore, cached locally:", e);
-          setCurrentExamId(newExamId);
-          setOriginalExam((prev: any) => (prev ? { ...prev, id: newExamId } : prev));
-          await saveExamLocally({ id: newExamId, ...examData });
-        }
-      } else {
-        setCurrentExamId(newExamId);
-        await saveExamLocally({ id: newExamId, ...examData });
-      }
+        source: 'custom' as const,
+      });
 
       setView('TIMER_SELECTION');
     } catch (error: any) {
@@ -335,19 +389,23 @@ function AppContent() {
    */
   const handleImportExam = async (imported: ImportedExam) => {
     setErrorMessage(null);
+    const prepared = prepareExamQuestions(imported.questions);
+    if (prepared.questions.length === 0) {
+      throw new Error('This file did not contain any usable question. Nothing was added.');
+    }
     const title = imported.title?.trim() || 'Imported Exam';
     const examData = {
       title,
       subject: imported.subject || 'General',
-      grade: imported.grade || 'Grade 12',
-      questions: imported.questions,
+      grade: imported.grade || 'General',
+      questions: prepared.questions,
       createdBy: currentUser?.uid || 'guest',
       createdAt: Date.now(),
       source: 'custom' as const,
       ...(imported.timeLimit && imported.timeLimit > 0 ? { timeLimit: imported.timeLimit } : {}),
     };
 
-    setExamQuestions(imported.questions);
+    setExamQuestions(prepared.questions);
     setExamTitle(title);
     setSelectedSubject(examData.subject);
     setSelectedGrade(examData.grade);
@@ -355,28 +413,7 @@ function AppContent() {
     setCurrentSessionId(null);
     setUserAnswers({});
 
-    const newExamId = `exam_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    setOriginalExam({ ...examData, id: newExamId });
-
-    if (currentUser && isOnline && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid) {
-      try {
-        const docRef = await addDoc(collection(db, 'exams'), {
-          ...examData,
-          createdAt: serverTimestamp(),
-        });
-        setCurrentExamId(docRef.id);
-        setOriginalExam((prev: any) => (prev ? { ...prev, id: docRef.id } : prev));
-        await saveExamLocally({ id: docRef.id, ...examData });
-      } catch (e) {
-        console.warn('Could not save the imported exam to Firestore, cached locally:', e);
-        setCurrentExamId(newExamId);
-        setOriginalExam((prev: any) => (prev ? { ...prev, id: newExamId } : prev));
-        await saveExamLocally({ id: newExamId, ...examData });
-      }
-    } else {
-      setCurrentExamId(newExamId);
-      await saveExamLocally({ id: newExamId, ...examData });
-    }
+    await persistNewExam(examData);
 
     setView('TIMER_SELECTION');
   };
@@ -455,27 +492,7 @@ function AppContent() {
           source: 'custom' as const
         };
         
-        const newExamId = `local_${Date.now()}`;
-        
-        if (currentUser && isOnline && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid) {
-           try {
-             const docRef = await addDoc(collection(db, 'exams'), {
-               ...examData,
-               createdAt: serverTimestamp()
-             });
-             setCurrentExamId(docRef.id);
-             setOriginalExam((prev: any) => (prev ? { ...prev, id: docRef.id } : prev));
-             await saveExamLocally({ id: docRef.id, ...examData });
-           } catch(e) {
-             setCurrentExamId(newExamId);
-             setOriginalExam((prev: any) => (prev ? { ...prev, id: newExamId } : prev));
-             await saveExamLocally({ id: newExamId, ...examData });
-           }
-        } else {
-           setCurrentExamId(newExamId);
-           setOriginalExam((prev: any) => (prev ? { ...prev, id: newExamId } : prev));
-           await saveExamLocally({ id: newExamId, ...examData });
-        }
+        await persistNewExam(examData);
       } catch (e) {
         console.error(e);
       }
@@ -532,26 +549,28 @@ function AppContent() {
       auth.currentUser!.uid === currentUser!.uid;
 
     if (canWriteCloud) {
-      try {
-        // Deterministic id keeps the local and cloud copies of one attempt in sync.
-        await setDoc(doc(db, 'user_exams', newSessionId), {
-          examId: resolvedExamId,
-          userId: userId,
-          status: 'COMPLETED',
-          answers,
-          score: graded.correct,
-          total: graded.graded,
-          totalQuestions: graded.total,
-          percentage: graded.percentage,
-          startTime: startedAt,
-          timeLimit: timeLimit || 0,
-          duration,
-          lastUpdated: serverTimestamp(),
-        });
-        setCurrentSessionId(newSessionId);
-      } catch (e) {
-        console.warn('Could not save the exam session to Firestore:', e);
-      }
+      // Deterministic id keeps the local and cloud copies of one attempt in
+      // sync. The write is bounded so a stalled backend cannot stop the
+      // student from seeing their results; the local copy is already saved and
+      // the offline queue replays it on reconnect.
+      void runWithTimeout(
+        () =>
+          setDoc(doc(db, 'user_exams', newSessionId), {
+            examId: resolvedExamId,
+            userId: userId,
+            status: 'COMPLETED',
+            answers,
+            score: graded.correct,
+            total: graded.graded,
+            totalQuestions: graded.total,
+            percentage: graded.percentage,
+            startTime: startedAt,
+            timeLimit: timeLimit || 0,
+            duration,
+            lastUpdated: serverTimestamp(),
+          }),
+        CRITICAL_WRITE_TIMEOUT_MS
+      );
     }
 
     setCurrentSessionId(newSessionId);
@@ -692,6 +711,7 @@ function AppContent() {
            setIsGuestMode(false);
            setView('UPLOAD');
         }}
+        onGoogleSignIn={loginWithGoogle}
       />
       
       <OfflineBanner />

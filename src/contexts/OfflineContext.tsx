@@ -27,6 +27,8 @@ interface OfflineContextType {
   promptInstall: () => Promise<boolean>;
   triggerSync: () => Promise<void>;
   saveExamLocally: (exam: OfflineExam) => Promise<void>;
+  /** Queues an exam whose cloud write did not complete, for replay on reconnect. */
+  queueExamForSync: (exam: OfflineExam) => Promise<void>;
   saveSessionLocally: (session: OfflineSession) => Promise<void>;
   getOfflineExamsList: (subject?: string) => Promise<OfflineExam[]>;
   getOfflineSessionData: (sessionId: string) => Promise<OfflineSession | null>;
@@ -258,6 +260,20 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
     await refreshStats();
   }, [refreshStats]);
 
+  const queueExamForSync = useCallback(async (exam: OfflineExam) => {
+    if (!exam?.id) return;
+    try {
+      await offlineStorage.addToSyncQueue({
+        type: 'CREATE_EXAM',
+        payload: exam,
+        timestamp: Date.now(),
+      });
+      await refreshStats();
+    } catch (error) {
+      console.warn('Could not queue the exam for a later sync:', error);
+    }
+  }, [refreshStats]);
+
   const saveSessionLocally = useCallback(async (session: OfflineSession) => {
     await offlineStorage.saveSession(session);
     if (!session.syncedWithCloud) {
@@ -293,6 +309,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       promptInstall,
       triggerSync,
       saveExamLocally,
+      queueExamForSync,
       saveSessionLocally,
       getOfflineExamsList,
       getOfflineSessionData,
@@ -311,6 +328,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       promptInstall,
       triggerSync,
       saveExamLocally,
+      queueExamForSync,
       saveSessionLocally,
       getOfflineExamsList,
       getOfflineSessionData,

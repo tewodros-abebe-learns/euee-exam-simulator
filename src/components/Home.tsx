@@ -11,7 +11,8 @@ import ExportExamButton from './ExportExamButton';
 import type { ImportedExam } from '../lib/examSchema';
 
 import { offlineStorage } from '../lib/offlineStorage';
-import { SUBJECTS as CANONICAL_SUBJECTS, GRADES, matchesSubject, subjectLabelKey, gradeLabelKey } from '../lib/subjects';
+import { GRADES, gradeLabelKey, subjectDisplayName } from '../lib/subjects';
+import { useSubjects, subjectMatchesFolder } from '../lib/subjectStore';
 
 interface Exam {
   id: string;
@@ -45,7 +46,7 @@ interface HomeProps {
   isParsing?: boolean;
 }
 
-const SUBJECTS: string[] = ['All', ...CANONICAL_SUBJECTS];
+
 
 export default function Home({ onContinue, onRetake, onViewSummary, onUpload, onProcessText, onImportExam, isParsing }: HomeProps) {
   const { currentUser, isFirebaseAuthed } = useAuth();
@@ -64,7 +65,6 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
   const [movingExam, setMovingExam] = useState<Exam | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [newSubject, setNewSubject] = useState('');
-  const [newGrade, setNewGrade] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
 
@@ -213,13 +213,15 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
     };
   }, [currentUser, isFirebaseAuthed]);
 
-  const getSubjectName = (subj: string) => t(subjectLabelKey(subj));
+  const { subjects: folderSubjects } = useSubjects();
+  const SUBJECTS: string[] = ['All', ...folderSubjects];
+  const getSubjectName = (subj: string) => subjectDisplayName(subj, t);
   const getGradeName = (grd?: string) => t(gradeLabelKey(grd));
 
   const filteredExams = useMemo(() => {
     return exams.filter(exam => {
       const matchesSearch = exam.title.toLowerCase().includes(searchQuery.toLowerCase());
-      const subjectOk = selectedSubject === 'All' || matchesSubject(exam.subject, selectedSubject);
+      const subjectOk = selectedSubject === 'All' || subjectMatchesFolder(exam.subject, selectedSubject);
       return matchesSearch && subjectOk;
     });
   }, [exams, searchQuery, selectedSubject]);
@@ -232,7 +234,6 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
   const handleMoveExam = (exam: any) => {
     setMovingExam(exam);
     setNewSubject(exam.subject);
-    setNewGrade(exam.grade || 'General');
   };
 
   const confirmRename = async () => {
@@ -260,21 +261,20 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
   };
 
   const confirmMove = async () => {
-    if (!movingExam || !newSubject || !newGrade) return;
+    if (!movingExam || !newSubject) return;
     setIsUpdating(true);
     const path = `exams/${movingExam.id}`;
     try {
       if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !movingExam.id.startsWith('local_')) {
         await updateDoc(doc(db, 'exams', movingExam.id), {
           subject: newSubject,
-          grade: newGrade
         });
       }
       const cached = await offlineStorage.getExamById(movingExam.id);
       if (cached) {
-        await offlineStorage.saveExam({ ...cached, subject: newSubject, grade: newGrade });
+        await offlineStorage.saveExam({ ...cached, subject: newSubject });
       }
-      setExams(prev => prev.map(e => e.id === movingExam.id ? { ...e, subject: newSubject, grade: newGrade } : e));
+      setExams(prev => prev.map(e => e.id === movingExam.id ? { ...e, subject: newSubject } : e));
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
     } finally {
@@ -635,35 +635,17 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
                             : 'bg-[var(--bg-accent)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-gray-600'
                         }`}
                       >
-                        {subject}
+                        {getSubjectName(subject)}
                       </button>
                     ))}
                   </div>
                 </div>
 
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-3 block">2. Select Grade</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {GRADES.map(grade => (
-                      <button
-                        key={grade}
-                        onClick={() => setNewGrade(grade)}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
-                          newGrade === grade 
-                            ? 'bg-[#8AB4F8] text-gray-900 border-[#8AB4F8]' 
-                            : 'bg-[var(--bg-accent)] text-[var(--text-secondary)] border-[var(--border-color)] hover:border-gray-600'
-                        }`}
-                      >
-                        {grade}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
+                              </div>
 
               <div className="flex gap-3">
                 <button onClick={() => setMovingExam(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
-                <button onClick={confirmMove} disabled={isUpdating || !newSubject || !newGrade} className="flex-1 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+                <button onClick={confirmMove} disabled={isUpdating || !newSubject} className="flex-1 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
                   {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : t('move')}
                 </button>
               </div>

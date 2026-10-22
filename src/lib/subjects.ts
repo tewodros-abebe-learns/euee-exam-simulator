@@ -73,6 +73,28 @@ export function subjectLabelKey(subject: string): TranslationKey {
   }
 }
 
+/**
+ * True when a subject name maps onto a built-in subject (including aliases such
+ * as "Mathematics" → Math). Custom, user-created subjects return false.
+ */
+export function isBuiltinSubject(raw?: string | null): boolean {
+  if (!raw) return false;
+  return raw.trim().toLowerCase().replace(/\s+/g, ' ') in SUBJECT_ALIASES;
+}
+
+/**
+ * Display name for a subject: translated for the built-ins, the student's own
+ * text for custom folders.
+ */
+export function subjectDisplayName(
+  raw: string | undefined | null,
+  t: (key: TranslationKey) => string
+): string {
+  const name = (raw || '').trim();
+  if (!name) return t('subjectGeneral');
+  return isBuiltinSubject(name) ? t(subjectLabelKey(name)) : name;
+}
+
 export const GRADES = ['Grade 12', 'Grade 11', 'Grade 10', 'Grade 9', 'General'] as const;
 
 export function gradeLabelKey(grade?: string | null): TranslationKey {

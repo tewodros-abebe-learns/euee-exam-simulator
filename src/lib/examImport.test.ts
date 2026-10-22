@@ -249,3 +249,32 @@ Answer: B`);
   assert.equal(bold.exam?.questions[0].question, 'Which gas do plants absorb?');
   assert.equal(bold.exam?.questions[0].correctAnswerIndex, 1);
 });
+
+test('JSON export keeps section, instruction, passage and context', () => {
+  const original = {
+    title: 'Mechanics',
+    subject: 'Physics',
+    grade: 'Grade 12',
+    questions: [
+      {
+        id: 'q1',
+        section: 'Part I',
+        instruction: 'Choose one',
+        passage: 'Read this.',
+        context: 'Diagram 2',
+        question: 'Which is a vector?',
+        options: ['Speed', 'Velocity'],
+        correctAnswerIndex: 1,
+        explanation: '',
+      },
+    ],
+  };
+
+  const report = parseExamJson(examToJsonString(original));
+  assert.equal(report.ok, true);
+  const question = report.exam!.questions[0];
+  assert.equal(question.section, 'Part I');
+  assert.equal(question.instruction, 'Choose one');
+  assert.equal(question.passage, 'Read this.');
+  assert.equal(question.context, 'Diagram 2');
+});
