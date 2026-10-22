@@ -27,11 +27,24 @@ export function prepareExamQuestions(input: unknown): PreparedQuestions {
 
   list.forEach((raw, index) => {
     const stem = typeof raw?.question === 'string' ? raw.question.trim() : '';
-    const options = Array.isArray(raw?.options)
-      ? raw!.options
-          .map((option) => (typeof option === 'string' ? option.trim() : ''))
-          .filter((option) => option.length > 0)
-      : [];
+
+    // Empty options are removed, but the answer key is an INDEX: deleting an
+    // option shifts everything after it. The kept entries therefore remember
+    // where they came from, and the key is re-pointed (or dropped) using that
+    // map. Without this, ["A", "", "C"] with key 1 would silently grade the
+    // wrong option as correct.
+    const rawOptions = Array.isArray(raw?.options) ? raw!.options : [];
+    const keptIndices: number[] = [];
+    const options: string[] = [];
+    rawOptions.forEach((option, optionIndex) => {
+      const text = typeof option === 'string' ? option.trim() : '';
+      if (!text) return;
+      options.push(text);
+      keptIndices.push(optionIndex);
+    });
+
+    /** Where the original option index ended up, or -1 when it was dropped. */
+    const remapIndex = (original: number): number => keptIndices.indexOf(original);
 
     if (!stem || options.length < 2) {
       dropped += 1;
@@ -50,12 +63,15 @@ export function prepareExamQuestions(input: unknown): PreparedQuestions {
     seenIds.add(id);
 
     const rawIndex = raw.correctAnswerIndex;
-    const isValidIndex =
-      typeof rawIndex === 'number' &&
-      Number.isInteger(rawIndex) &&
-      rawIndex >= 0 &&
-      rawIndex < options.length;
-    if (!isValidIndex && rawIndex !== -1) repaired += 1;
+    const hasIndex = typeof rawIndex === 'number' && Number.isInteger(rawIndex) && rawIndex >= 0;
+    const originalAnswerText = hasIndex ? rawOptions[rawIndex as number] : undefined;
+    const isUsableKey =
+      hasIndex &&
+      typeof originalAnswerText === 'string' &&
+      originalAnswerText.trim().length > 0;
+    const remapped = isUsableKey ? remapIndex(rawIndex as number) : -1;
+
+    if (remapped === -1 && rawIndex !== -1) repaired += 1;
 
     questions.push({
       ...raw,
@@ -63,7 +79,7 @@ export function prepareExamQuestions(input: unknown): PreparedQuestions {
       question: stem,
       options,
       // -1 keeps the question usable for practice but never scored.
-      correctAnswerIndex: isValidIndex ? (rawIndex as number) : -1,
+      correctAnswerIndex: remapped,
       explanation: typeof raw.explanation === 'string' ? raw.explanation.trim() : '',
     });
   });

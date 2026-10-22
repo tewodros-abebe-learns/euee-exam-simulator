@@ -4,6 +4,7 @@
  */
 
 import { type Question } from '../services/geminiService';
+import { subjectMatchesFolder } from './subjects';
 
 const DB_NAME = 'EUEE_Exam_Offline_DB';
 const DB_VERSION = 1;
@@ -110,7 +111,11 @@ class OfflineStorageManager {
     this.readyPromise = (async () => {
       try {
         await this.getDB();
-        const existing = await this.getAllExams();
+        // NOTE: read through the raw reader, never through getAllExams().
+        // getAllExams() awaits `whenReady()`, which awaits this very promise —
+        // that is a circular wait and the app would sit on its loading screen
+        // forever (guest mode has no Firestore listener to rescue it).
+        const existing = await this.readAllExams();
         const legacySamples = existing.filter((exam) => exam.isSample === true);
         for (const legacy of legacySamples) {
           await this.deleteExam(legacy.id);
@@ -168,23 +173,31 @@ class OfflineStorageManager {
     });
   }
 
-  async getAllExams(subject?: string): Promise<OfflineExam[]> {
-    await this.whenReady();
+  /**
+   * Reads every cached exam without waiting for initialization.
+   * Only `init()` may use this — see the note inside `init()`.
+   */
+  private async readAllExams(): Promise<OfflineExam[]> {
     const db = await this.getDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('exams', 'readonly');
       const store = tx.objectStore('exams');
       const req = store.getAll();
       req.onsuccess = () => {
-        let results: OfflineExam[] = req.result || [];
-        if (subject && subject !== 'All') {
-          results = results.filter(e => e.subject.toLowerCase() === subject.toLowerCase());
-        }
+        const results: OfflineExam[] = req.result || [];
         results.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         resolve(results);
       };
       req.onerror = () => reject(req.error);
     });
+  }
+
+  async getAllExams(subject?: string): Promise<OfflineExam[]> {
+    await this.whenReady();
+    const results = await this.readAllExams();
+    if (!subject || subject === 'All') return results;
+    // Aliases matter here too: "Mathematics" belongs to the "Math" folder.
+    return results.filter((exam) => subjectMatchesFolder(exam.subject, subject));
   }
 
   async deleteExam(id: string): Promise<void> {
@@ -313,7 +326,6 @@ class OfflineStorageManager {
 
   async getStats(): Promise<{ cachedExamsCount: number; offlineSessionsCount: number; pendingSyncCount: number }> {
     try {
-      const db = await this.getDB();
       const [exams, sessions, queue] = await Promise.all([
         this.getAllExams(),
         this.getAllSessions(),

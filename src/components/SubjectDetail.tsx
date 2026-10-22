@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ChevronRight, 
@@ -11,10 +11,6 @@ import {
   ArrowLeft, 
   Folder, 
   GraduationCap,
-  Plus,
-  Search,
-  MoreVertical,
-  Calendar,
   Trash2,
   Edit2,
   FolderOpen,
@@ -22,16 +18,18 @@ import {
   X,
   Loader2
 } from 'lucide-react';
-import { collection, query, where, onSnapshot, orderBy, deleteDoc, doc, updateDoc, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, deleteDoc, doc, updateDoc, getDocs } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrorHandler';
 import { db, auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { offlineStorage } from '../lib/offlineStorage';
 import { GRADES, gradeLabelKey, subjectDisplayName } from '../lib/subjects';
-import { useSubjects, subjectMatchesFolder } from '../lib/subjectStore';
+import { useSubjects, folderForSubject, listSubjects } from '../lib/subjectStore';
+import { runWithTimeout, LOCAL_WRITE_TIMEOUT_MS, CLOUD_WRITE_TIMEOUT_MS } from '../lib/cloudWrite';
 import ExportExamButton from './ExportExamButton';
-import { SUPPORTED_UPLOAD_EXTENSIONS } from '../lib/fileParser';
+import type { ImportedExam } from '../lib/examSchema';
+import ExamUploadModal from './ExamUploadModal';
 
 interface Exam {
   id: string;
@@ -61,8 +59,9 @@ interface SubjectDetailProps {
   onContinue: (exam: Exam, session: UserExam) => void;
   onRetake: (exam: Exam) => void;
   onViewSummary: (exam: Exam, session: UserExam) => void;
-  onUpload: (file: File, subject: string, grade: string) => Promise<void>;
-  onProcessText: (text: string, subject: string, grade: string) => Promise<void>;
+  onUpload: (file: File, subject: string, grade?: string) => Promise<void>;
+  onProcessText: (text: string, subject: string, grade?: string) => Promise<void>;
+  onImportExam?: (exam: ImportedExam) => Promise<void>;
   isParsing: boolean;
 }
 
@@ -76,6 +75,7 @@ export default function SubjectDetail({
   onViewSummary,
   onUpload,
   onProcessText,
+  onImportExam,
   isParsing
 }: SubjectDetailProps) {
   const { currentUser, isFirebaseAuthed } = useAuth();
@@ -83,21 +83,12 @@ export default function SubjectDetail({
   const [exams, setExams] = useState<Exam[]>([]);
   const [userExams, setUserExams] = useState<UserExam[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>('Exam');
-  const [expandedGrades, setExpandedGrades] = useState<Record<string, boolean>>({
-    'Grade 12': true,
-    'Grade 11': false,
-    'Grade 10': false,
-    'Grade 9': false,
-    'General': false
-  });
+  // Sections start open: a folder that opens onto a row of collapsed headers
+  // looks empty even when it holds papers.
+  const [expandedGrades, setExpandedGrades] = useState<Record<string, boolean>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [uploadingGrade, setUploadingGrade] = useState<string | null>(null);
-  const [uploadModalGrade, setUploadModalGrade] = useState<string | null>(null);
-  const [pastingGrade, setPastingGrade] = useState<string | null>(null);
-  const [pastedText, setPastedText] = useState('');
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragError, setDragError] = useState('');
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [deletingExamId, setDeletingExamId] = useState<string | null>(null);
   const [renamingExam, setRenamingExam] = useState<Exam | null>(null);
   const [movingExam, setMovingExam] = useState<Exam | null>(null);
@@ -105,7 +96,6 @@ export default function SubjectDetail({
   const [newSubject, setNewSubject] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { subjects: SUBJECTS } = useSubjects();
 
@@ -123,7 +113,10 @@ export default function SubjectDetail({
         if (!isMounted) return;
 
         // Filter local custom exams for this subject
-        const matchingLocalExams = localExams.filter(e => subjectMatchesFolder(e.subject, subject));
+        const folderList = listSubjects();
+        const matchingLocalExams = localExams.filter(
+          (e) => folderForSubject(e.subject, folderList) === subject
+        );
 
         setExams(prev => {
           const map = new Map<string, Exam>();
@@ -194,7 +187,9 @@ export default function SubjectDetail({
 
       unsubscribeExams = onSnapshot(examsQuery, (snapshot) => {
         const cloudExams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Exam));
-        const filteredCloud = cloudExams.filter(e => subjectMatchesFolder(e.subject, subject));
+        const filteredCloud = cloudExams.filter(
+          (e) => folderForSubject(e.subject, listSubjects()) === subject
+        );
 
         setExams(prev => {
           const map = new Map<string, Exam>();
@@ -258,6 +253,18 @@ export default function SubjectDetail({
     return map;
   }, [exams]);
 
+  /**
+   * Sections are only shown when they hold something.
+   *
+   * With grades no longer chosen at upload time most papers are "General", and
+   * a column of five empty grade boxes made the folder look broken. "General"
+   * is always present because it hosts the upload tile.
+   */
+  const gradeSections = useMemo(() => {
+    const withExams = GRADES.filter((grade) => (examsByGrade[grade] || []).length > 0);
+    return withExams.includes('General') ? withExams : [...withExams, 'General'];
+  }, [examsByGrade]);
+
   const ongoingExams = useMemo(() => {
     return userExams
       .filter(ue => ue.status === 'IN_PROGRESS')
@@ -284,75 +291,14 @@ export default function SubjectDetail({
 
   const expandAll = () => {
     const next: Record<string, boolean> = {};
-    GRADES.forEach(g => next[g] = true);
+    gradeSections.forEach((g) => (next[g] = true));
     setExpandedGrades(next);
   };
 
   const collapseAll = () => {
     const next: Record<string, boolean> = {};
-    GRADES.forEach(g => next[g] = false);
+    gradeSections.forEach((g) => (next[g] = false));
     setExpandedGrades(next);
-  };
-
-  const handleUploadClick = (grade: string) => {
-    setUploadModalGrade(grade);
-    setDragError('');
-  };
-
-  const handleManualFileInputClick = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-      fileInputRef.current.click();
-    }
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    const grade = uploadModalGrade || uploadingGrade;
-    if (file && grade) {
-      setUploadingGrade(grade);
-      setUploadModalGrade(null);
-      try {
-        await onUpload(file, subject, grade);
-      } finally {
-        setUploadingGrade(null);
-        if (e.target) e.target.value = '';
-      }
-    }
-  };
-
-  const handleDropFile = async (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-    setDragError('');
-    const file = e.dataTransfer.files?.[0];
-    const grade = uploadModalGrade;
-    if (!file) return;
-
-    const validExtensions = ['.pdf', '.md', '.txt'];
-    const hasValidExt = validExtensions.some(ext => file.name.toLowerCase().endsWith(ext));
-    if (!hasValidExt) {
-      setDragError('Please upload a PDF, MD, or TXT file.');
-      return;
-    }
-
-    if (grade) {
-      setUploadingGrade(grade);
-      setUploadModalGrade(null);
-      try {
-        await onUpload(file, subject, grade);
-      } finally {
-        setUploadingGrade(null);
-      }
-    }
-  };
-
-  const handlePasteSubmit = async () => {
-    if (pastingGrade && pastedText.trim()) {
-      await onProcessText(pastedText, subject, pastingGrade);
-      setPastingGrade(null);
-      setPastedText('');
-    }
   };
 
   const handleRenameExam = (exam: Exam) => {
@@ -370,18 +316,25 @@ export default function SubjectDetail({
     setIsUpdating(true);
     const updatedTitle = newTitle.trim();
     const path = `exams/${renamingExam.id}`;
+    const examId = renamingExam.id;
     try {
-      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !renamingExam.id.startsWith('local_')) {
-        await updateDoc(doc(db, 'exams', renamingExam.id), {
-          title: updatedTitle
-        });
-      }
-      // Also update in offline storage
-      const cached = await offlineStorage.getExamById(renamingExam.id);
+      // Local first, cloud best-effort — see Home/Dashboard for the reasoning.
+      const cached = await offlineStorage.getExamById(examId);
       if (cached) {
-        await offlineStorage.saveExam({ ...cached, title: updatedTitle });
+        await runWithTimeout(
+          () => offlineStorage.saveExam({ ...cached, title: updatedTitle }),
+          LOCAL_WRITE_TIMEOUT_MS,
+          'Rename exam (local)'
+        );
       }
-      setExams(prev => prev.map(e => e.id === renamingExam.id ? { ...e, title: updatedTitle } : e));
+      setExams(prev => prev.map(e => e.id === examId ? { ...e, title: updatedTitle } : e));
+      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !examId.startsWith('local_')) {
+        void runWithTimeout(
+          () => updateDoc(doc(db, 'exams', examId), { title: updatedTitle }),
+          CLOUD_WRITE_TIMEOUT_MS,
+          'Rename exam (cloud)'
+        );
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
     } finally {
@@ -394,18 +347,25 @@ export default function SubjectDetail({
     if (!movingExam || !newSubject) return;
     setIsUpdating(true);
     const path = `exams/${movingExam.id}`;
+    const examId = movingExam.id;
+    const targetSubject = newSubject;
     try {
-      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !movingExam.id.startsWith('local_')) {
-        await updateDoc(doc(db, 'exams', movingExam.id), {
-          subject: newSubject
-        });
-      }
-      // Also update in offline storage
-      const cached = await offlineStorage.getExamById(movingExam.id);
+      const cached = await offlineStorage.getExamById(examId);
       if (cached) {
-        await offlineStorage.saveExam({ ...cached, subject: newSubject });
+        await runWithTimeout(
+          () => offlineStorage.saveExam({ ...cached, subject: targetSubject }),
+          LOCAL_WRITE_TIMEOUT_MS,
+          'Move exam (local)'
+        );
       }
-      setExams(prev => prev.map(e => e.id === movingExam.id ? { ...e, subject: newSubject } : e));
+      setExams(prev => prev.map(e => e.id === examId ? { ...e, subject: targetSubject } : e));
+      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !examId.startsWith('local_')) {
+        void runWithTimeout(
+          () => updateDoc(doc(db, 'exams', examId), { subject: targetSubject }),
+          CLOUD_WRITE_TIMEOUT_MS,
+          'Move exam (cloud)'
+        );
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
     } finally {
@@ -418,21 +378,23 @@ export default function SubjectDetail({
     if (!deletingExamId) return;
     setIsDeleting(true);
     const path = `exams/${deletingExamId}`;
+    const examId = deletingExamId;
     try {
-      // 1. Delete from local/offline storage
-      try {
-        await offlineStorage.deleteExam(deletingExamId);
-      } catch (offErr) {
-        console.warn("Could not delete from offline storage:", offErr);
-      }
+      // 1. Delete from local/offline storage first so the click always lands.
+      await runWithTimeout(
+        () => offlineStorage.deleteExam(examId),
+        LOCAL_WRITE_TIMEOUT_MS,
+        'Delete exam (local)'
+      );
+      setExams(prev => prev.filter(e => e.id !== examId));
 
       // 2. Delete from Firestore if authenticated
-      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !deletingExamId.startsWith('local_')) {
+      if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !examId.startsWith('local_')) {
         try {
           const sessionsPath = 'user_exams';
           const sessionsQuery = query(
             collection(db, sessionsPath),
-            where('examId', '==', deletingExamId),
+            where('examId', '==', examId),
             where('userId', '==', currentUser.uid)
           );
           const sessionsSnapshot = await getDocs(sessionsQuery);
@@ -441,9 +403,12 @@ export default function SubjectDetail({
         } catch (sessionErr) {
           console.warn("User sessions cleanup notice:", sessionErr);
         }
-        await deleteDoc(doc(db, 'exams', deletingExamId));
+        await runWithTimeout(
+          () => deleteDoc(doc(db, 'exams', examId)),
+          CLOUD_WRITE_TIMEOUT_MS,
+          'Delete exam (cloud)'
+        );
       }
-      setExams(prev => prev.filter(e => e.id !== deletingExamId));
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, path);
     } finally {
@@ -502,7 +467,7 @@ export default function SubjectDetail({
               className="flex items-center gap-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors text-sm font-medium"
             >
               <ArrowLeft className="w-4 h-4" />
-              Back to Dashboard
+              {t('backToDashboard')}
             </button>
           )}
           <button 
@@ -521,14 +486,14 @@ export default function SubjectDetail({
                 <span>{subject}</span>
               </div>
               <div className="ml-4 space-y-1 border-l border-white/5">
-                {GRADES.map(grade => (
+                {gradeSections.map(grade => (
                   <button
                     key={grade}
                     onClick={() => scrollToGrade(grade)}
                     className="w-full text-left px-4 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/5 rounded-lg transition-all flex items-center gap-2"
                   >
                     <div className="w-1.5 h-1.5 rounded-full bg-gray-700" />
-                    {grade}
+                    {getGradeName(grade)}
                   </button>
                 ))}
               </div>
@@ -584,7 +549,7 @@ export default function SubjectDetail({
                   </div>
                 </div>
 
-                {GRADES.map(grade => (
+                {gradeSections.map(grade => (
                   <div key={grade} id={`grade-section-${grade}`} className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-3xl overflow-hidden">
                     <button 
                       onClick={() => toggleGrade(grade)}
@@ -599,11 +564,11 @@ export default function SubjectDetail({
                           <p className="text-sm text-[var(--text-secondary)]">{t('examsAvailable', { count: examsByGrade[grade].length })}</p>
                         </div>
                       </div>
-                      <ChevronDown className={`w-6 h-6 text-gray-600 transition-transform duration-300 ${expandedGrades[grade] ? 'rotate-180 text-[#8AB4F8]' : ''}`} />
+                      <ChevronDown className={`w-6 h-6 text-gray-600 transition-transform duration-300 ${expandedGrades[grade] !== false ? 'rotate-180 text-[#8AB4F8]' : ''}`} />
                     </button>
 
                     <AnimatePresence>
-                      {expandedGrades[grade] && (
+                      {expandedGrades[grade] !== false && (
                         <motion.div
                           initial={{ height: 0, opacity: 0 }}
                           animate={{ height: 'auto', opacity: 1 }}
@@ -625,7 +590,7 @@ export default function SubjectDetail({
                                       <div>
                                         <h4 className="font-bold text-[var(--text-primary)] text-sm line-clamp-1">{exam.title}</h4>
                                         <p className="text-[10px] text-[var(--text-secondary)] uppercase tracking-widest mt-1">
-                                          {exam.createdAt?.toDate ? new Date(exam.createdAt.toDate()).toLocaleDateString() : 'Recently added'}
+                                          {exam.createdAt?.toDate ? new Date(exam.createdAt.toDate()).toLocaleDateString() : t('recentlyAdded')}
                                         </p>
                                       </div>
                                     </div>
@@ -650,7 +615,7 @@ export default function SubjectDetail({
                                         latestSession?.status === 'COMPLETED' ? 'text-green-400' : 
                                         latestSession?.status === 'IN_PROGRESS' ? 'text-yellow-400' : 'text-gray-500'
                                       }`}>
-                                        {latestSession ? latestSession.status.replace('_', ' ') : 'Not Started'}
+                                        {latestSession ? latestSession.status.replace('_', ' ') : t('notStarted')}
                                       </span>
                                     </div>
                                     <button 
@@ -658,40 +623,30 @@ export default function SubjectDetail({
                                       className="bg-[#8AB4F8] text-gray-900 px-4 py-2 rounded-xl text-xs font-bold hover:bg-[#AECBFA] transition-all flex items-center gap-2"
                                     >
                                       <Play className="w-3 h-3 fill-current" />
-                                      Take Exam
+                                      {t('takeExamAction')}
                                     </button>
                                   </div>
                                 </div>
                               );
                             })}
 
-                            <button 
-                              onClick={() => handleUploadClick(grade)}
+                            <button
+                              onClick={() => setIsUploadModalOpen(true)}
                               disabled={isParsing}
-                              className="border-2 border-dashed border-[var(--border-color)] rounded-2xl p-5 flex flex-col items-center justify-center gap-2 hover:border-gray-600 hover:bg-white/2 transition-all group"
+                              className="border-2 border-dashed border-[var(--border-color)] rounded-2xl p-5 flex flex-col items-center justify-center gap-2 hover:border-[#8AB4F8]/60 hover:bg-white/2 transition-all group min-h-[132px]"
                             >
-                              {isParsing && uploadingGrade === grade ? (
+                              {isParsing ? (
                                 <Loader2 className="w-6 h-6 text-[#8AB4F8] animate-spin" />
                               ) : (
                                 <div className="bg-white/5 p-2 rounded-lg group-hover:bg-[#8AB4F8]/10 transition-colors">
                                   <Upload className="w-5 h-5 text-[var(--text-secondary)] group-hover:text-[#8AB4F8]" />
                                 </div>
                               )}
-                              <span className="text-xs font-bold text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors">
-                                {isParsing && uploadingGrade === grade ? 'Analyzing...' : 'Upload Exam'}
+                              <span className="text-xs font-bold text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors text-center">
+                                {isParsing ? t('analyzing') : t('uploadExam')}
                               </span>
-                            </button>
-
-                            <button 
-                              onClick={() => setPastingGrade(grade)}
-                              disabled={isParsing}
-                              className="border-2 border-dashed border-[var(--border-color)] rounded-2xl p-5 flex flex-col items-center justify-center gap-2 hover:border-gray-600 hover:bg-white/2 transition-all group"
-                            >
-                              <div className="bg-white/5 p-2 rounded-lg group-hover:bg-[#8AB4F8]/10 transition-colors">
-                                <FileText className="w-5 h-5 text-[var(--text-secondary)] group-hover:text-[#8AB4F8]" />
-                              </div>
-                              <span className="text-xs font-bold text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors">
-                                Paste Exam
+                              <span className="text-[10px] text-[var(--text-secondary)] text-center leading-tight">
+                                {t('supportsFormatsShort')}
                               </span>
                             </button>
                           </div>
@@ -792,96 +747,21 @@ export default function SubjectDetail({
         </div>
       </main>
 
-      {/* Hidden File Input */}
-      <input 
-        type="file" 
-        ref={fileInputRef}
-        onChange={handleFileChange}
-        className="hidden"
-        accept={SUPPORTED_UPLOAD_EXTENSIONS.join(",")}
-      />
+      {/* One upload dialog for the whole app: formats, samples, custom subjects. */}
+      {onUpload && onProcessText && (
+        <ExamUploadModal
+          isOpen={isUploadModalOpen}
+          onClose={() => setIsUploadModalOpen(false)}
+          onUpload={onUpload}
+          onProcessText={onProcessText}
+          onImportExam={onImportExam}
+          isParsing={isParsing}
+          defaultSubject={subject}
+        />
+      )}
 
       {/* Modals */}
       <AnimatePresence>
-        {uploadModalGrade && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setUploadModalGrade(null)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-[var(--bg-secondary)] border border-[var(--border-color)] p-8 rounded-[32px] max-w-lg w-full shadow-2xl flex flex-col">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="bg-[#8AB4F8]/10 w-10 h-10 rounded-xl flex items-center justify-center">
-                  <Upload className="w-5 h-5 text-[#8AB4F8]" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-[var(--text-primary)]">{t('uploadExamFile')}</h3>
-                  <p className="text-xs text-[var(--text-secondary)] uppercase tracking-widest">{subject} • {uploadModalGrade}</p>
-                </div>
-              </div>
-
-              <div 
-                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-                onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
-                onDrop={handleDropFile}
-                onClick={handleManualFileInputClick}
-                className={`border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all mb-4 ${
-                  isDragging 
-                    ? 'border-[#8AB4F8] bg-[#8AB4F8]/10 scale-[1.02]' 
-                    : 'border-[var(--border-color)] hover:border-[#8AB4F8] hover:bg-white/2'
-                }`}
-              >
-                <div className="bg-white/5 p-4 rounded-2xl mb-4 group-hover:scale-110 transition-transform">
-                  <Upload className="w-8 h-8 text-[#8AB4F8]" />
-                </div>
-                <h4 className="text-sm font-bold text-[var(--text-primary)] mb-1">{t('dragDropText')}</h4>
-                <p className="text-xs text-[var(--text-secondary)]">{t('supportsFormatsShort')}</p>
-              </div>
-
-              {dragError && (
-                <p className="text-xs text-red-400 mb-4">{dragError}</p>
-              )}
-
-              <div className="flex gap-3 justify-end mt-4">
-                <button onClick={() => setUploadModalGrade(null)} className="px-6 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all text-xs">
-                  Cancel
-                </button>
-                <button onClick={handleManualFileInputClick} className="px-6 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 text-xs">
-                  <Upload className="w-4 h-4" />
-                  Select File
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-
-        {pastingGrade && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setPastingGrade(null)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-[var(--bg-secondary)] border border-[var(--border-color)] p-8 rounded-[32px] max-w-2xl w-full shadow-2xl flex flex-col">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="bg-[#8AB4F8]/10 w-10 h-10 rounded-xl flex items-center justify-center">
-                  <FileText className="w-5 h-5 text-[#8AB4F8]" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-[var(--text-primary)]">{t('pasteExamText')}</h3>
-                  <p className="text-xs text-[var(--text-secondary)] uppercase tracking-widest">{pastingGrade}</p>
-                </div>
-              </div>
-              <textarea
-                value={pastedText}
-                onChange={(e) => setPastedText(e.target.value)}
-                disabled={isParsing}
-                placeholder={t('pasteExamPlaceholder')}
-                className="w-full h-64 bg-[var(--bg-primary)] border border-[var(--border-color)] rounded-2xl p-4 text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] resize-none focus:outline-none focus:border-[#8AB4F8] transition-colors mb-6"
-              />
-              <div className="flex gap-3 justify-end mt-auto">
-                <button onClick={() => setPastingGrade(null)} disabled={isParsing} className="px-6 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
-                <button onClick={handlePasteSubmit} disabled={isParsing || !pastedText.trim()} className="px-8 bg-[#8AB4F8] text-gray-900 py-3 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2">
-                  {isParsing ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Generate Exam'}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-
         {deletingExamId && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDeletingExamId(null)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
@@ -929,7 +809,7 @@ export default function SubjectDetail({
                 <FolderOpen className="w-6 h-6 text-[#8AB4F8]" />
               </div>
               <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('moveExamTitleShort')}</h3>
-              <p className="text-[var(--text-secondary)] mb-6">Select a new folder for "{movingExam.title}".</p>
+              <p className="text-[var(--text-secondary)] mb-6">{t('selectNewFolder')} — "{movingExam.title}"</p>
               
               <div className="space-y-6 mb-8">
                 <div>

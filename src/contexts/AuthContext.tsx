@@ -127,6 +127,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Guards against a double click opening two pop-ups.
   const inFlightRef = useRef(false);
 
+  // Failsafe: if Firebase Auth never reports back (blocked network, a broken
+  // config, a stalled service worker), the app must not sit on a spinner. The
+  // cached profile already lets a returning student use the app offline.
+  useEffect(() => {
+    if (!isInitializing) return;
+    const failsafe = window.setTimeout(() => setIsInitializing(false), 8000);
+    return () => window.clearTimeout(failsafe);
+  }, [isInitializing]);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser: FirebaseUser | null) => {
       if (firebaseUser) {

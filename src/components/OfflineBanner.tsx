@@ -1,4 +1,4 @@
-import { Wifi, WifiOff, RefreshCw, Download, X, CheckCircle2, Zap } from 'lucide-react';
+import { WifiOff, RefreshCw, X, CheckCircle2, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useOffline } from '../contexts/OfflineContext';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -9,8 +9,6 @@ export default function OfflineBanner() {
     pendingSyncCount, 
     isSyncing, 
     triggerSync, 
-    isInstallable, 
-    promptInstall, 
     showOfflineToast, 
     dismissOfflineToast, 
     toastMessage,

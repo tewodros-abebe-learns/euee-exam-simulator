@@ -1,5 +1,9 @@
-import { useSyncExternalStore } from 'react';
-import { SUBJECTS as BUILTIN_SUBJECTS } from './subjects';
+import { useMemo, useSyncExternalStore } from 'react';
+import {
+  SUBJECTS as BUILTIN_SUBJECTS,
+  canonicalSubjectKey,
+  subjectMatchesFolder,
+} from './subjects';
 
 /**
  * Subjects are folders. The built-in ones are a starting point, not a rule:
@@ -125,34 +129,55 @@ function getSnapshot(): string {
 
 export function useSubjects(): { subjects: string[]; addSubject: typeof addSubject; removeSubject: typeof removeSubject } {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, () => LIST_BUILTIN.join('\u0000'));
-  const subjects = snapshot ? snapshot.split('\u0000') : LIST_BUILTIN;
+  // A stable array identity keeps dependent memos from recomputing on every render.
+  const subjects = useMemo(
+    () => (snapshot ? snapshot.split('\u0000') : [...LIST_BUILTIN]),
+    [snapshot]
+  );
   return { subjects, addSubject, removeSubject };
 }
 
 /**
- * Compares an exam's subject with a folder name.
- * Built-in aliases still match ("Maths" → "Math"); anything else compares as
- * plain text, so a custom "Agriculture" folder collects exactly that subject.
+ * Which folder an exam belongs in.
+ *
+ * `General` is the fallback bucket — it collects everything that has no folder
+ * of its own, so a folder card's count always equals what you see when you
+ * open it. Without this, an exam whose subject matched no folder appeared in
+ * every "General" view but in no folder count.
  */
-export function subjectMatchesFolder(examSubject: string | undefined | null, folder: string): boolean {
-  const folderName = sanitize(folder);
-  if (!folderName || folderName.toLowerCase() === 'general') return true;
-  if (!examSubject) return false;
+export function folderForSubject(
+  examSubject: string | undefined | null,
+  folders: readonly string[]
+): string {
+  const match = folders.find(
+    (folder) => folder.toLowerCase() !== 'general' && subjectMatchesFolder(examSubject, folder)
+  );
+  return match || 'General';
+}
 
-  const key = (value: string) => sanitize(value).toLowerCase();
-  return key(examSubject) === key(folderName) || key(examSubject) === canonicalKey(folderName);
+/**
+ * Guarantees that a subject name has a folder, and returns the name to store.
+ *
+ * Used when a paper arrives with its own subject ("Agricultural Science"):
+ * without this the exam would be saved with a subject no folder lists, so it
+ * would be reachable only through "All". Built-in spellings are folded onto
+ * their canonical folder instead of creating a duplicate.
+ */
+export function ensureSubjectFolder(raw: string | undefined | null): string {
+  const name = sanitize(raw || '');
+  if (!name) return 'General';
+  const existing = listSubjects().find(
+    (subject) => canonicalSubjectKey(subject) === canonicalSubjectKey(name)
+  );
+  if (existing) return existing;
+  return addSubject(name) || name;
 }
 
 /** Canonical key for a subject name, resolving the built-in aliases. */
 export function canonicalKey(raw: string | undefined | null): string {
-  const value = sanitize(raw || '').toLowerCase();
-  const aliases: Record<string, string> = {
-    maths: 'math',
-    mathematics: 'math',
-    'scholastic aptitude': 'aptitude',
-    'scholastic aptitude test': 'aptitude',
-  };
-  return aliases[value] || value;
+  return canonicalSubjectKey(sanitize(raw));
 }
+
+export { subjectMatchesFolder };
 
 export const BUILTIN_SUBJECT_LIST: readonly string[] = LIST_BUILTIN;

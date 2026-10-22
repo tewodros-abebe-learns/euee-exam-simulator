@@ -21,10 +21,12 @@ import { generateExamFromDocument, type Question } from './services/geminiServic
 import { readFileAsBase64, extractTextFromFile, assertSupportedUpload, getFileExtension, isLocalImportFile } from './lib/fileParser';
 
 import { db, auth } from './firebase';
-import { collection, serverTimestamp, doc, getDocs, query, where, setDoc } from 'firebase/firestore';
+import { collection, serverTimestamp, doc, setDoc } from 'firebase/firestore';
 import { offlineStorage } from './lib/offlineStorage';
 import { gradeExam } from './lib/scoring';
 import { parseExamText } from './lib/examImport';
+import { ensureSubjectFolder } from './lib/subjectStore';
+import { getCorrectAnswer } from './lib/scoring';
 import { suggestTitleFromFileName, type ImportedExam } from './lib/examSchema';
 import { getExamProgressKey } from './lib/examProgress';
 type View = 'DASHBOARD' | 'UPLOAD' | 'TIMER_SELECTION' | 'EXAM' | 'SUMMARY' | 'SUBJECT_DETAIL';
@@ -107,6 +109,14 @@ function AppContent() {
       setView('DASHBOARD');
     }
   }, [currentUser, authLoading, isGuestMode, view]);
+
+  // Toasts are informational: they fade on their own so a stale error banner
+  // never covers the page, while "Dismiss" still works immediately.
+  useEffect(() => {
+    if (!errorMessage) return;
+    const timer = window.setTimeout(() => setErrorMessage(null), 10000);
+    return () => window.clearTimeout(timer);
+  }, [errorMessage]);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -357,8 +367,12 @@ function AppContent() {
       }
 
       if (result.warning) setErrorMessage(result.warning);
+      // A paper that names its own subject must get a matching folder,
+      // otherwise it would be invisible in every folder view.
+      const resolvedSubject = ensureSubjectFolder(options.subject || 'General');
       setExamQuestions(prepared.questions);
       setExamTitle(computedTitle);
+      setSelectedSubject(resolvedSubject);
       setSelectedGrade(options.grade || 'General');
       setRecommendedTimeLimit(null);
       setCurrentSessionId(null);
@@ -366,7 +380,7 @@ function AppContent() {
       // Local-first: the exam appears immediately, the cloud copy follows.
       await persistNewExam({
         title: computedTitle,
-        subject: options.subject || 'General',
+        subject: resolvedSubject,
         grade: options.grade || 'General',
         questions: prepared.questions,
         createdBy: currentUser?.uid || 'guest',
@@ -396,7 +410,7 @@ function AppContent() {
     const title = imported.title?.trim() || 'Imported Exam';
     const examData = {
       title,
-      subject: imported.subject || 'General',
+      subject: ensureSubjectFolder(imported.subject || 'General'),
       grade: imported.grade || 'General',
       questions: prepared.questions,
       createdBy: currentUser?.uid || 'guest',
@@ -721,10 +735,6 @@ function AppContent() {
           {view === 'UPLOAD' && (!currentUser && !isGuestMode) && (
             <LandingPage
               key="landing"
-              onUpload={handleFileUpload}
-              onProcessText={handleTextSubmit}
-              isParsing={isParsing}
-              currentUser={currentUser}
               onGuestMode={() => {
                 setIsGuestMode(true);
                 setView('DASHBOARD');
@@ -815,9 +825,13 @@ function AppContent() {
               timeSpentSeconds={lastResult?.duration}
               onReviewMissed={() => {
                 const source = originalExam?.questions || examQuestions;
-                const missed = source.filter(
-                  (q: Question) => !userAnswers[q.id] || userAnswers[q.id] !== q.options[q.correctAnswerIndex]
-                );
+                // Only questions that carry a real answer key can be "missed";
+                // ungraded practice questions must never be drilled as mistakes.
+                const missed = source.filter((q: Question) => {
+                  const correct = getCorrectAnswer(q);
+                  if (correct === undefined) return false;
+                  return userAnswers[q.id] !== correct;
+                });
                 if (missed.length === 0) return;
                 setExamQuestions(missed);
                 setExamTitle(`${examTitle} — ${t('reviewMissed')}`);

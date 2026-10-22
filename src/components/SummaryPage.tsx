@@ -226,8 +226,12 @@ INSTRUCTIONS FOR AI TUTOR:
     },
   ];
 
-  const scoreTone =
-    result.percentage >= 75
+  // A paper with no answer keys has no score to colour: 0% there would look
+  // like a failed attempt instead of "this cannot be graded".
+  const hasScore = result.graded > 0;
+  const scoreTone = !hasScore
+    ? 'text-[var(--text-secondary)]'
+    : result.percentage >= 75
       ? 'text-emerald-500'
       : result.percentage >= 50
         ? 'text-amber-500'
@@ -263,11 +267,13 @@ INSTRUCTIONS FOR AI TUTOR:
                     className={scoreTone}
                     strokeWidth="12"
                     strokeLinecap="round"
-                    strokeDasharray={`${(result.percentage / 100) * 326.7} 326.7`}
+                    strokeDasharray={`${hasScore ? (result.percentage / 100) * 326.7 : 0} 326.7`}
                   />
                 </svg>
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className={`text-3xl font-black ${scoreTone}`}>{result.percentage}%</span>
+                  <span className={`text-3xl font-black ${scoreTone}`}>
+                    {hasScore ? `${result.percentage}%` : '—'}
+                  </span>
                   <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--text-secondary)]">
                     {t('score')}
                   </span>

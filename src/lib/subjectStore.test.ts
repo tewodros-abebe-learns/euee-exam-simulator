@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addSubject, listSubjects, removeSubject, subjectMatchesFolder, canonicalKey } from './subjectStore';
+import {
+  addSubject,
+  listSubjects,
+  removeSubject,
+  subjectMatchesFolder,
+  canonicalKey,
+  folderForSubject,
+  ensureSubjectFolder,
+} from './subjectStore';
 
 test('built-in subjects are always available', () => {
   const subjects = listSubjects();
@@ -39,4 +47,33 @@ test('custom folders match their own subject, and General stays a catch-all', ()
 test('built-in aliases still resolve', () => {
   assert.equal(canonicalKey('Mathematics'), 'math');
   assert.equal(subjectMatchesFolder('Math', 'Math'), true);
+});
+
+test('legacy spellings land in the right built-in folder', () => {
+  addSubject('Geography');
+  assert.equal(subjectMatchesFolder('Mathematics', 'Math'), true);
+  assert.equal(subjectMatchesFolder('Scholastic Aptitude Test', 'Aptitude'), true);
+  // A custom folder must not swallow a built-in alias.
+  assert.equal(subjectMatchesFolder('Mathematics', 'Geography'), false);
+  removeSubject('Geography');
+});
+
+test('General is the leftover bucket, not a second copy of every folder', () => {
+  const folders = ['General', 'Math', 'Biology', 'Geography'];
+  addSubject('Geography');
+  assert.equal(folderForSubject('Math', folders), 'Math');
+  assert.equal(folderForSubject('Mathematics', folders), 'Math');
+  assert.equal(folderForSubject('Geography', folders), 'Geography');
+  assert.equal(folderForSubject('Civics', folders), 'General');
+  assert.equal(folderForSubject(undefined, folders), 'General');
+  removeSubject('Geography');
+});
+
+test('an imported paper always gets a folder to live in', () => {
+  // A paper that names its own subject must not become invisible.
+  assert.equal(ensureSubjectFolder('Agricultural Science'), 'Agricultural Science');
+  // Built-in spellings fold onto their canonical folder instead of duplicating.
+  assert.equal(ensureSubjectFolder('mathematics'), 'Math');
+  assert.equal(ensureSubjectFolder('   '), 'General');
+  removeSubject('Agricultural Science');
 });

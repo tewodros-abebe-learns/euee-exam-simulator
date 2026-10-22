@@ -49,7 +49,8 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       let str = translations[language]?.[key] || translations.en?.[key] || (key as string);
       if (params) {
         Object.entries(params).forEach(([paramKey, paramVal]) => {
-          str = str.replace(new RegExp(`\\{${paramKey}\\}`, 'g'), String(paramVal));
+          // A function replacement keeps `$&`/`$1` inside a value literal.
+          str = str.replace(new RegExp(`\\{${paramKey}\\}`, 'g'), () => String(paramVal));
         });
       }
       return str;

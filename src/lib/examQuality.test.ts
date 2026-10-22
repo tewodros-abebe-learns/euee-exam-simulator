@@ -56,3 +56,20 @@ test('non-string options are discarded rather than rendered as objects', () => {
   ]);
   assert.deepEqual(questions[0].options, ['a', 'b']);
 });
+
+test('removing an empty option keeps the answer key pointing at the same text', () => {
+  // ["A", "", "C"] with key 2 ("C") must still resolve to "C", not to a
+  // shifted neighbour and not to -1.
+  const { questions } = prepareExamQuestions([
+    { ...base, options: ['A', '', 'C', 'D'], correctAnswerIndex: 2 },
+  ]);
+  assert.deepEqual(questions[0].options, ['A', 'C', 'D']);
+  assert.equal(questions[0].options[questions[0].correctAnswerIndex], 'C');
+});
+
+test('a key that pointed at an empty option becomes ungraded, never wrong', () => {
+  const { questions } = prepareExamQuestions([
+    { ...base, options: ['A', '', 'C'], correctAnswerIndex: 1 },
+  ]);
+  assert.equal(questions[0].correctAnswerIndex, -1);
+});

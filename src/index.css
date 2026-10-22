@@ -80,3 +80,72 @@
   color: var(--text-secondary);
   font-style: italic;
 }
+
+/* ---------------------------------------------------------------------------
+   Interaction polish
+   Colour palette and typography are untouched; these rules only make the app
+   feel considered: visible keyboard focus, comfortable scrolling, and no
+   surprise motion for people who ask their device to reduce it.
+--------------------------------------------------------------------------- */
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Buttons react on press without waiting for the 300ms double-tap window. */
+  button,
+  [role='button'],
+  a {
+    touch-action: manipulation;
+  }
+
+  /* One consistent, high-contrast focus ring for keyboard users only. */
+  :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid #8AB4F8;
+    outline-offset: 2px;
+    border-radius: 0.75rem;
+  }
+
+  ::selection {
+    background: rgba(138, 180, 248, 0.35);
+  }
+
+  /* Slim, theme-aware scrollbars (the OS default is heavy on dark surfaces). */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary);
+    background-clip: content-box;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

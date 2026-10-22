@@ -37,6 +37,19 @@ const SUBJECT_ALIASES: Record<string, Subject> = {
   sat: 'SAT',
 };
 
+/**
+ * Comparison key for a subject name.
+ *
+ * Two folders must only be considered different when they really are: a paper
+ * stored as "Mathematics" belongs in the "Math" folder, and "Scholastic
+ * Aptitude Test" belongs in "Aptitude". Custom subjects keep their own text,
+ * so they never collapse into a built-in by accident.
+ */
+export function canonicalSubjectKey(raw?: string | null): string {
+  const key = (raw || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return SUBJECT_ALIASES[key] ? SUBJECT_ALIASES[key].toLowerCase() : key;
+}
+
 /** Maps any stored/legacy spelling onto a canonical subject. */
 export function normalizeSubject(raw?: string | null): Subject {
   if (!raw) return 'General';
@@ -71,6 +84,19 @@ export function subjectLabelKey(subject: string): TranslationKey {
     default:
       return 'subjectGeneral';
   }
+}
+
+/**
+ * True when an exam belongs in the folder named `folder`.
+ *
+ * `General` is the catch-all: it matches anything, which is why folder counts
+ * use `folderForSubject` (below) to keep "General" as the leftover bucket.
+ */
+export function subjectMatchesFolder(examSubject: string | undefined | null, folder: string): boolean {
+  const folderName = (folder || '').trim();
+  if (!folderName || folderName.toLowerCase() === 'general') return true;
+  if (!examSubject || !examSubject.trim()) return false;
+  return canonicalSubjectKey(examSubject) === canonicalSubjectKey(folderName);
 }
 
 /**

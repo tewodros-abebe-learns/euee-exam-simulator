@@ -34,6 +34,8 @@ interface ExamUploadModalProps {
   onImportExam?: (exam: ImportedExam) => Promise<void>;
   isParsing?: boolean;
   defaultSubject?: string;
+  /** Which tab the modal opens on (e.g. "paste" from the Paste questions button). */
+  defaultTab?: Tab;
 }
 
 type Tab = 'upload' | 'paste' | 'import';
@@ -91,6 +93,7 @@ export default function ExamUploadModal({
   onImportExam,
   isParsing = false,
   defaultSubject = 'General',
+  defaultTab = 'upload',
 }: ExamUploadModalProps) {
   const { t } = useLanguage();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -112,6 +115,13 @@ export default function ExamUploadModal({
   const [previewSource, setPreviewSource] = useState('');
   const [isReadingFile, setIsReadingFile] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  // Tracked separately from `isImporting`: a slow save keeps the button locked
+  // even after the "still working" message appears, so one exam cannot be
+  // added twice by an impatient second click.
+  const importInFlightRef = useRef(false);
+  // Set when the save outlives the confirm timeout: the button stays locked and
+  // the modal closes by itself the moment the save lands.
+  const [importPending, setImportPending] = useState(false);
   // The key is hidden by default: the preview must never spoil answers.
   const [showKeys, setShowKeys] = useState(false);
   const pendingSourceRef = useRef<{ file?: File; text?: string } | null>(null);
@@ -138,8 +148,20 @@ export default function ExamUploadModal({
     setPreview(null);
     setIsDragging(false);
     setFormat('auto');
-    setTab('upload');
-  }, [isOpen]);
+    setTab(defaultTab);
+  }, [isOpen, defaultTab]);
+
+  // Escape closes the dialog unless a save is in flight.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || importInFlightRef.current) return;
+      event.stopPropagation();
+      onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
 
   /** Selecting a format also moves the student to the tab that fits it. */
   const applyFormat = (next: ExamFormat) => {
@@ -294,33 +316,48 @@ export default function ExamUploadModal({
   };
 
   const handleConfirmImport = async () => {
-    if (!preview?.exam || !onImportExam) return;
+    if (!preview?.exam || !onImportExam || importInFlightRef.current) return;
+    importInFlightRef.current = true;
     setIsImporting(true);
     setError('');
+    const payload = {
+      ...preview.exam,
+      title: previewTitle.trim() || preview.exam.title,
+      subject,
+      grade: preview.exam.grade,
+    };
     let guard: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    const saving = onImportExam(payload);
     try {
-      // Safety net: if a future change makes saving block, release the button
-      // instead of leaving a spinner that never ends.
+      // Safety net: if a future change makes saving block, say so instead of
+      // leaving a spinner that never ends.
       await Promise.race([
-        onImportExam({
-          ...preview.exam,
-          title: previewTitle.trim() || preview.exam.title,
-          subject,
-          grade: preview.exam.grade,
-        }),
+        saving,
         new Promise<never>((_, reject) => {
-          guard = setTimeout(
-            () => reject(new Error(t('importStillWorking'))),
-            IMPORT_CONFIRM_TIMEOUT_MS
-          );
+          guard = setTimeout(() => {
+            timedOut = true;
+            reject(new Error(t('importStillWorking')));
+          }, IMPORT_CONFIRM_TIMEOUT_MS);
         }),
       ]);
       onClose();
     } catch (err: any) {
-      setError(err?.message || 'Could not add the exam.');
+      if (timedOut) {
+        // The exam is still being written. Keep the button locked and close
+        // quietly once the write lands, so there is exactly one copy.
+        setImportPending(true);
+        setError(err?.message || t('importStillWorking'));
+        void saving.then(() => onClose()).catch(() => setImportPending(false));
+      } else {
+        setError(err?.message || 'Could not add the exam.');
+      }
     } finally {
       if (guard) clearTimeout(guard);
-      setIsImporting(false);
+      if (!timedOut) {
+        importInFlightRef.current = false;
+        setIsImporting(false);
+      }
     }
   };
 
@@ -364,7 +401,12 @@ export default function ExamUploadModal({
   ).length;
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+    <div
+      className="fixed inset-0 z-[110] flex items-center justify-center p-4 sm:p-6 overflow-y-auto"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('uploadExam')}
+    >
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -769,8 +811,8 @@ export default function ExamUploadModal({
                       </p>
                     )}
 
-                    <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1 mb-3">
-                      {previewQuestions.slice(0, 4).map((question, index) => (
+                    <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1 mb-3">
+                      {previewQuestions.map((question, index) => (
                         <div
                           key={question.id}
                           className="bg-[var(--bg-accent)] border border-[var(--border-color)] rounded-xl p-3"
@@ -797,11 +839,6 @@ export default function ExamUploadModal({
                           </div>
                         </div>
                       ))}
-                      {previewQuestions.length > 4 && (
-                        <p className="text-[11px] text-[var(--text-secondary)] px-1">
-                          +{previewQuestions.length - 4} more
-                        </p>
-                      )}
                     </div>
                   </>
                 )}
@@ -852,7 +889,7 @@ export default function ExamUploadModal({
                   <button
                     type="button"
                     onClick={handleConfirmImport}
-                    disabled={!preview.ok || isImporting || !onImportExam}
+                    disabled={!preview.ok || isImporting || importPending || !onImportExam}
                     className="px-6 py-2.5 bg-[#8AB4F8] text-gray-900 rounded-xl font-bold hover:bg-[#AECBFA] transition-all flex items-center gap-2 text-xs shadow-md disabled:opacity-50"
                   >
                     {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}

@@ -7,14 +7,11 @@ import {
   Clock, 
   Flag, 
   Menu, 
-  FileText,
   AlertTriangle,
   X,
-  Save,
   ZoomIn,
   Minus,
   Plus,
-  HelpCircle,
   RotateCcw,
   Info,
   Layers,
@@ -60,8 +57,7 @@ export default function ExamInterface({
   examTitle,
   subject,
   grade,
-  saveProgress,
-  isDarkMode
+  saveProgress
 }: ExamInterfaceProps) {
   const { t } = useLanguage();
   // Progress is keyed by the exam identity (never by title alone) so that a
@@ -184,6 +180,8 @@ export default function ExamInterface({
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return;
       }
+      // Never hijack browser/system shortcuts (Ctrl+F, Cmd+A, Alt+← …).
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       const key = e.key.toUpperCase();
       const optionIndex = /^[A-E]$/.test(key)
@@ -461,6 +459,11 @@ export default function ExamInterface({
 
   const isWarningTime = !isUntimed && timeLeft <= 300; // 5 minutes
 
+  // Used by the submit dialog to point at the first skipped question.
+  const unansweredIndexes = questions
+    .map((question, index) => (selectedAnswers[question.id] ? -1 : index))
+    .filter((index) => index >= 0);
+
   return (
     <div className="flex flex-col h-full bg-[var(--bg-primary)] text-[var(--text-primary)] overflow-hidden transition-colors duration-300">
       {/* Main 3-Column Layout */}
@@ -656,6 +659,16 @@ export default function ExamInterface({
                 </button>
               </div>
               
+              {/* Which paper am I writing? The title and folder belong on screen. */}
+              <div className="hidden md:flex flex-col items-end min-w-0 px-2">
+                <span className="text-xs font-bold text-[var(--text-primary)] truncate max-w-[22rem]">
+                  {examTitle}
+                </span>
+                <span className="text-[10px] uppercase tracking-widest text-[var(--text-secondary)] font-semibold">
+                  {[subject, grade && grade !== 'General' ? grade : null].filter(Boolean).join(' · ')}
+                </span>
+              </div>
+
               <div className="flex items-center gap-2">
                 <div
                   className="flex items-center gap-2 bg-[var(--bg-secondary)] border border-[var(--border-color)] px-3 sm:px-4 py-2 rounded-2xl shadow-xs"
@@ -771,7 +784,7 @@ export default function ExamInterface({
                       const letter = String.fromCharCode(65 + index);
                       return (
                         <button
-                          key={option}
+                          key={`${currentQuestion?.id ?? 'q'}-${index}`}
                           onClick={() => handleOptionSelect(option)}
                           className={`w-full flex items-center gap-4 p-4 md:p-5 min-h-[64px] rounded-2xl border-2 transition-all duration-200 ease-in-out text-left group break-words whitespace-normal shadow-xs ${
                             isSelected 
@@ -868,11 +881,26 @@ export default function ExamInterface({
           border-l border-[var(--border-color)] bg-[var(--bg-secondary)] flex-col shadow-2xl xl:shadow-none
           ${isMenuOpen ? 'translate-x-0' : 'translate-x-full xl:translate-x-0'}
         `}>
-          <div className="p-6 pb-4 border-b border-[var(--border-color)] flex items-center justify-between shrink-0">
-            <h2 className="text-xs font-black uppercase tracking-[0.2em] text-[var(--text-secondary)]">{t('examOverview')}</h2>
-            <button onClick={() => setIsMenuOpen(false)} className="xl:hidden p-2 bg-[var(--bg-accent)] rounded-full hover:bg-[var(--card-hover)] text-[var(--text-primary)] transition-colors border border-[var(--border-color)]">
-              <X className="w-5 h-5" />
-            </button>
+          <div className="p-6 pb-4 border-b border-[var(--border-color)] shrink-0">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xs font-black uppercase tracking-[0.2em] text-[var(--text-secondary)]">{t('examOverview')}</h2>
+              <button onClick={() => setIsMenuOpen(false)} className="xl:hidden p-2 bg-[var(--bg-accent)] rounded-full hover:bg-[var(--card-hover)] text-[var(--text-primary)] transition-colors border border-[var(--border-color)]">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            {/* Progress: answered count and a slim bar, readable at a glance. */}
+            <div className="mt-3">
+              <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-[var(--text-secondary)] mb-1.5">
+                <span>{t('answered')}</span>
+                <span>{questions.length - unansweredIndexes.length}/{questions.length}</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-[var(--bg-accent)] overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-[#8AB4F8] transition-all duration-300"
+                  style={{ width: `${questions.length ? ((questions.length - unansweredIndexes.length) / questions.length) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
           </div>
           
           <div className="flex-1 overflow-y-auto p-4 scroll-smooth">
@@ -1000,9 +1028,32 @@ export default function ExamInterface({
               </div>
               
               <h2 className="text-2xl font-bold text-[var(--text-primary)] mb-4">{t('finishExam')}</h2>
-              <p className="text-[var(--text-secondary)] mb-8 leading-relaxed">
+              <p className="text-[var(--text-secondary)] mb-4 leading-relaxed">
                 {t('submitModalDesc')}
               </p>
+
+              {/* Everything a student needs before the point of no return. */}
+              <div className="mb-5 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-accent)] p-3.5">
+                <p className="text-xs font-bold text-[var(--text-primary)]">
+                  {t('submitProgress', {
+                    answered: Object.keys(selectedAnswers).filter((id) => !!selectedAnswers[id]).length,
+                    total: questions.length,
+                    flagged: flaggedQuestions.size,
+                  })}
+                </p>
+                {unansweredIndexes.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentIndex(unansweredIndexes[0]);
+                      setShowSubmitModal(false);
+                    }}
+                    className="mt-2 text-[11px] font-bold text-[#3b82f6] dark:text-[#8AB4F8] hover:underline"
+                  >
+                    {t('reviewUnanswered')} ({unansweredIndexes.length})
+                  </button>
+                )}
+              </div>
 
               <div className="flex flex-col gap-3">
                 <button
