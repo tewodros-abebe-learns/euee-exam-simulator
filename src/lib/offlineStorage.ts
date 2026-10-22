@@ -4,7 +4,7 @@
  */
 
 import { type Question } from '../services/geminiService';
-import { subjectMatchesFolder } from './subjects';
+import { subjectMatchesFolder } from './subjectStore';
 
 const DB_NAME = 'EUEE_Exam_Offline_DB';
 const DB_VERSION = 1;
@@ -196,7 +196,8 @@ class OfflineStorageManager {
     await this.whenReady();
     const results = await this.readAllExams();
     if (!subject || subject === 'All') return results;
-    // Aliases matter here too: "Mathematics" belongs to the "Math" folder.
+    // Aliases and renamed folders matter here too: "Mathematics" belongs to
+    // the "Math" folder, and a renamed folder keeps all of its papers.
     return results.filter((exam) => subjectMatchesFolder(exam.subject, subject));
   }
 

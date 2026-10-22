@@ -205,6 +205,8 @@ function AppContent() {
       if (recovered.length > 0) {
         setExamQuestions(recovered);
         setExamTitle(cached?.title || examTitle || 'Exam');
+        // The recovery succeeded, so any earlier failure message is stale.
+        setErrorMessage('');
         return;
       }
 
@@ -669,7 +671,7 @@ function AppContent() {
     setCurrentSessionId(newSessionId);
 
     try {
-      localStorage.removeItem('euee_active_exam_state');
+      localStorage.removeItem(ACTIVE_EXAM_STATE_KEY);
       localStorage.removeItem(getExamProgressKey(currentExamId, examTitle));
     } catch {}
 
@@ -701,11 +703,14 @@ function AppContent() {
   };
 
   const handleSelectExam = (exam: any) => {
-    if (!exam || !exam.questions || exam.questions.length === 0) {
+    // Same validation as every other entry point: one unusable question must
+    // not be enough to open an exam screen that cannot be answered.
+    const questions = sanitizeQuestions(exam?.questions);
+    if (!exam || questions.length === 0) {
       setErrorMessage(t('emptyExamError'));
       return;
     }
-    setExamQuestions(exam.questions);
+    setExamQuestions(questions);
     setExamTitle(exam.title || 'National Exam');
     setSelectedSubject(exam.subject || 'General');
     setSelectedGrade(exam.grade || 'Grade 12');
@@ -738,6 +743,10 @@ function AppContent() {
     setUserAnswers(session?.answers || {});
     // Resuming keeps the original start time so the remaining time is honest.
     setStartTime(session?.startTime || Date.now());
+    // An attempt that already exists is by definition one whose progress is
+    // being saved: without this, refreshing a *resumed* exam wrote no snapshot
+    // and the whole attempt vanished from the screen (and from the exit path).
+    setSaveProgress(true);
     setCurrentSessionId(session?.id);
     // A resumed attempt whose clock already ran out must not silently restart.
     if (session?.timeLimit > 0) {
@@ -762,9 +771,25 @@ function AppContent() {
 
   const handleViewSummarySession = (exam: any, session: any) => {
     if (!exam) return;
-    const questions = exam.questions || [];
+    const questions = sanitizeQuestions(exam.questions);
+    if (questions.length === 0) {
+      setErrorMessage(t('emptyExamError'));
+      return;
+    }
     const answers = session?.answers || {};
     const graded = gradeExam(questions, answers);
+    // Sessions store the time spent under several historical names, and the
+    // device copy keeps only the timestamps: derive it rather than showing "—".
+    const rawLastUpdated = session?.lastUpdated;
+    const lastUpdatedMs =
+      typeof rawLastUpdated === 'number'
+        ? rawLastUpdated
+        : typeof rawLastUpdated?.toMillis === 'function'
+          ? rawLastUpdated.toMillis()
+          : null;
+    const derivedDuration =
+      lastUpdatedMs && session?.startTime ? Math.max(0, Math.round((lastUpdatedMs - session.startTime) / 1000)) : 0;
+    const timeSpent = session?.timeSpent ?? session?.duration ?? derivedDuration;
     setExamQuestions(questions);
     setExamTitle(exam.title || 'Exam Summary');
     setOriginalExam(exam);
@@ -773,7 +798,7 @@ function AppContent() {
       score: graded.correct,
       total: graded.graded,
       percentage: graded.percentage,
-      duration: session?.timeSpent || session?.duration || 0,
+      duration: timeSpent || 0,
       completedAt: session?.lastUpdated || Date.now(),
     });
     setView('SUMMARY');

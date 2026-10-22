@@ -5,8 +5,9 @@ import { db, auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { FileText, Trash2, Edit2, Loader2, Search, FolderOpen, Upload, Type, X } from 'lucide-react';
+import { FileText, Trash2, Edit2, Loader2, Search, FolderCog, FolderOpen, Upload, Type, X } from 'lucide-react';
 import ExamUploadModal from './ExamUploadModal';
+import FolderManager from './FolderManager';
 import ExportExamButton from './ExportExamButton';
 import type { ImportedExam } from '../lib/examSchema';
 
@@ -34,6 +35,9 @@ interface UserExam {
   score?: number;
   total?: number;
   percentage?: number;
+  /** Seconds spent, as stored by older and newer releases respectively. */
+  timeSpent?: number;
+  duration?: number;
   lastUpdated: any;
 }
 
@@ -58,6 +62,7 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('All');
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [isFolderManagerOpen, setIsFolderManagerOpen] = useState(false);
   const [uploadModalDefaultTab, setUploadModalDefaultTab] = useState<'upload' | 'paste'>('upload');
   
   // Modals state
@@ -72,7 +77,7 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
   // Escape closes whichever confirmation dialog is open, so a stray key press
   // never traps the student inside a modal.
   useEffect(() => {
-    if (!deletingExamId && !renamingExam && !movingExam) return;
+    if (!deletingExamId && !renamingExam && !movingExam && !isFolderManagerOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if (deletingExamId && !isDeleting) setDeletingExamId(null);
@@ -81,10 +86,10 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [deletingExamId, renamingExam, movingExam, isDeleting, isUpdating]);
+  }, [deletingExamId, renamingExam, movingExam, isFolderManagerOpen, isDeleting, isUpdating]);
 
   useEffect(() => {
-    if (deletingExamId || renamingExam || movingExam || isUploadModalOpen) {
+    if (deletingExamId || renamingExam || movingExam || isUploadModalOpen || isFolderManagerOpen) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = '';
@@ -92,7 +97,7 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
     return () => {
       document.body.style.overflow = '';
     };
-  }, [deletingExamId, renamingExam, movingExam, isUploadModalOpen]);
+  }, [deletingExamId, renamingExam, movingExam, isUploadModalOpen, isFolderManagerOpen]);
 
   // Last-resort failsafe: whatever is slow (IndexedDB, a stalled listener), the
   // list must never be stuck behind a spinner.
@@ -145,7 +150,13 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
               answers: ls.answers,
               startTime: ls.startTime,
               timeLimit: ls.timeLimit,
-              lastUpdated: ls.lastUpdated
+              lastUpdated: ls.lastUpdated,
+              // Kept so reopening a finished attempt can still show its score
+              // and the time it took.
+              score: ls.score,
+              total: ls.total,
+              percentage: ls.percentage,
+              timeSpent: ls.timeSpent
             });
           });
           prev.forEach(pe => map.set(pe.id, pe));
@@ -235,8 +246,47 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
     };
   }, [currentUser, isFirebaseAuthed]);
 
-  const { subjects: folderSubjects } = useSubjects();
+  const {
+    subjects: folderSubjects,
+    folders,
+    addSubject,
+    removeSubject,
+    renameSubject,
+  } = useSubjects();
   const SUBJECTS: string[] = ['All', ...folderSubjects];
+
+  // How many exams each folder currently shows — the manager says so, so a
+  // student can see what a rename or a delete will touch.
+  const folderCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    folderSubjects.forEach((folder) => {
+      counts[folder] = 0;
+    });
+    exams.forEach((exam) => {
+      const folder = folderForSubject(exam.subject, folderSubjects);
+      counts[folder] = (counts[folder] || 0) + 1;
+    });
+    return counts;
+  }, [exams, folderSubjects]);
+
+  // A folder that disappears (deleted here or in another tab) must not leave
+  // the list filtered on a chip that no longer exists.
+  useEffect(() => {
+    if (selectedSubject === 'All') return;
+    if (!folderSubjects.includes(selectedSubject)) setSelectedSubject('All');
+  }, [folderSubjects, selectedSubject]);
+
+  const handleRenameFolder = (name: string, next: string) => {
+    const result = renameSubject(name, next);
+    // Follow the rename instead of dropping the student out of the folder.
+    if (result.ok && selectedSubject === name) setSelectedSubject(result.name || next);
+    return result;
+  };
+
+  const handleRemoveFolder = (name: string) => {
+    removeSubject(name);
+    if (selectedSubject === name) setSelectedSubject('All');
+  };
   const getSubjectName = (subj: string) => subjectDisplayName(subj, t);
   const getGradeName = (grd?: string) => t(gradeLabelKey(grd));
 
@@ -258,7 +308,7 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
 
   const handleMoveExam = (exam: any) => {
     setMovingExam(exam);
-    setNewSubject(exam.subject);
+    setNewSubject(folderForSubject(exam.subject, folderSubjects));
   };
 
   const confirmRename = async () => {
@@ -449,6 +499,16 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
                 {subject === 'All' ? t('allExams') : getSubjectName(subject)}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => setIsFolderManagerOpen(true)}
+              title={t('manageFolders')}
+              aria-label={t('manageFolders')}
+              className="ml-auto shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-bold text-[var(--text-secondary)] bg-white/5 hover:bg-white/10 transition-all"
+            >
+              <FolderCog className="w-4 h-4" />
+              <span className="hidden sm:inline">{t('manageFolders')}</span>
+            </button>
           </div>
 
           {/* Exam List */}
@@ -516,7 +576,7 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
 
                       <h3 className="text-lg font-bold text-[var(--text-primary)] mb-1.5 line-clamp-2 leading-snug">{exam.title}</h3>
                       <p className="text-[11px] text-[var(--text-secondary)] mb-4 uppercase tracking-widest font-bold">
-                        {getSubjectName(exam.subject)}
+                        {getSubjectName(folderForSubject(exam.subject, folderSubjects))}
                         {exam.grade && exam.grade !== 'General' && ` • ${getGradeName(exam.grade)}`}
                         {` • ${t('questionCountLabel', { count: exam.questions?.length || 0 })}`}
                       </p>
@@ -717,6 +777,20 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isFolderManagerOpen && (
+          <FolderManager
+            isOpen={isFolderManagerOpen}
+            onClose={() => setIsFolderManagerOpen(false)}
+            folders={folders}
+            counts={folderCounts}
+            onAdd={addSubject}
+            onRename={handleRenameFolder}
+            onRemove={handleRemoveFolder}
+          />
         )}
       </AnimatePresence>
 

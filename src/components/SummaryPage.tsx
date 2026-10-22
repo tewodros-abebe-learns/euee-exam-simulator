@@ -62,14 +62,21 @@ function Metric({
   value,
   label,
   tone,
+  onClick,
+  active = false,
+  hint,
 }: {
   icon: typeof CheckCircle2;
   value: string | number;
   label: string;
   tone: string;
+  /** When given, the number is a shortcut to those questions. */
+  onClick?: () => void;
+  active?: boolean;
+  hint?: string;
 }) {
-  return (
-    <div className="flex items-center gap-2.5 min-w-0 px-4 py-3">
+  const inner = (
+    <>
       <Icon className={`w-4 h-4 shrink-0 ${tone}`} />
       <div className="min-w-0">
         <div className={`text-lg font-black leading-none ${tone}`}>{value}</div>
@@ -77,7 +84,25 @@ function Metric({
           {label}
         </div>
       </div>
-    </div>
+    </>
+  );
+
+  if (!onClick) {
+    return <div className="flex items-center gap-2.5 min-w-0 px-4 py-3">{inner}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={hint}
+      aria-pressed={active}
+      className={`flex items-center gap-2.5 min-w-0 px-4 py-3 text-left rounded-xl transition-colors ${
+        active ? 'bg-[var(--bg-accent)] ring-1 ring-inset ring-[#8AB4F8]/50' : 'hover:bg-[var(--bg-accent)]'
+      }`}
+    >
+      {inner}
+    </button>
   );
 }
 
@@ -95,11 +120,49 @@ export default function SummaryPage({
   const [copyFailed, setCopyFailed] = useState(false);
   const [copiedPlatform, setCopiedPlatform] = useState<string | null>(null);
   const [showReview, setShowReview] = useState(false);
+  // Which slice of the paper the review panel is showing. `all` is the default;
+  // clicking Correct / Incorrect / Skipped narrows it to exactly those.
+  const [reviewFilter, setReviewFilter] = useState<'all' | 'correct' | 'incorrect' | 'skipped'>('all');
   const [showAiTools, setShowAiTools] = useState(false);
   const [expandedExplanations, setExpandedExplanations] = useState<Record<string, boolean>>({});
 
   const result = useMemo(() => gradeExam(questions, userAnswers), [questions, userAnswers]);
   const missedCount = result.incorrect + result.skipped;
+
+  // The review list, with each question's status resolved once.
+  const reviewRows = useMemo(
+    () =>
+      questions.map((question, index) => ({
+        question,
+        index,
+        status: getAnswerStatus(question, userAnswers),
+      })),
+    [questions, userAnswers]
+  );
+  const visibleRows =
+    reviewFilter === 'all'
+      ? reviewRows
+      : reviewRows.filter((row) => row.status === reviewFilter);
+
+  const filterLabel =
+    reviewFilter === 'correct'
+      ? t('correct')
+      : reviewFilter === 'incorrect'
+        ? t('incorrect')
+        : reviewFilter === 'skipped'
+          ? t('skipped')
+          : t('allQuestions');
+
+  /** Clicking a number opens the review on those questions; clicking again clears. */
+  const toggleFilter = (filter: 'correct' | 'incorrect' | 'skipped', count: number) => {
+    if (count === 0) return;
+    if (reviewFilter === filter) {
+      setReviewFilter('all');
+      return;
+    }
+    setReviewFilter(filter);
+    setShowReview(true);
+  };
 
   const formattedAnswers = useMemo(
     () =>
@@ -336,13 +399,32 @@ INSTRUCTIONS FOR AI TUTOR:
                 </p>
               )}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-y-1 md:gap-y-0 md:divide-x divide-[var(--border-color)] mt-2">
-                <Metric icon={CheckCircle2} value={result.correct} label={t('correct')} tone="text-emerald-500" />
-                <Metric icon={XCircle} value={result.incorrect} label={t('incorrect')} tone="text-red-500" />
+                <Metric
+                  icon={CheckCircle2}
+                  value={result.correct}
+                  label={t('correct')}
+                  tone="text-emerald-500"
+                  onClick={result.correct > 0 ? () => toggleFilter('correct', result.correct) : undefined}
+                  active={reviewFilter === 'correct' && showReview}
+                  hint={t('viewCorrectAnswers')}
+                />
+                <Metric
+                  icon={XCircle}
+                  value={result.incorrect}
+                  label={t('incorrect')}
+                  tone="text-red-500"
+                  onClick={result.incorrect > 0 ? () => toggleFilter('incorrect', result.incorrect) : undefined}
+                  active={reviewFilter === 'incorrect' && showReview}
+                  hint={t('viewWrongAnswers')}
+                />
                 <Metric
                   icon={MinusCircle}
                   value={result.skipped}
                   label={t('skipped')}
                   tone={result.skipped > 0 ? 'text-amber-500' : 'text-[var(--text-secondary)]'}
+                  onClick={result.skipped > 0 ? () => toggleFilter('skipped', result.skipped) : undefined}
+                  active={reviewFilter === 'skipped' && showReview}
+                  hint={t('viewSkippedAnswers')}
                 />
                 <Metric
                   icon={Clock}
@@ -358,7 +440,10 @@ INSTRUCTIONS FOR AI TUTOR:
           <div className="border-t border-[var(--border-color)] p-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
             <button
               type="button"
-              onClick={() => setShowReview((prev) => !prev)}
+              onClick={() => {
+                if (showReview) setReviewFilter('all');
+                setShowReview((prev) => !prev);
+              }}
               aria-expanded={showReview}
               className="flex items-center justify-center gap-2 rounded-xl bg-[#8AB4F8] text-gray-900 font-bold py-2.5 px-4 hover:bg-[#AECBFA] transition-all text-sm"
             >
@@ -403,8 +488,23 @@ INSTRUCTIONS FOR AI TUTOR:
               exit={{ opacity: 0, height: 0 }}
               className="overflow-hidden"
             >
-              <div className="mt-3 space-y-2.5">
-                {questions.map((question, index) => {
+              <div className="mt-3">
+                {reviewFilter !== 'all' && (
+                  <div className="flex items-center justify-between gap-3 mb-2 px-1">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-secondary)]">
+                      {t('showingCount', { count: visibleRows.length, total: reviewRows.length })} · {filterLabel}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setReviewFilter('all')}
+                      className="text-[11px] font-bold text-[#3b82f6] dark:text-[#8AB4F8] hover:underline"
+                    >
+                      {t('showAll')}
+                    </button>
+                  </div>
+                )}
+              <div className="space-y-2.5">
+                {visibleRows.map(({ question, index }) => {
                   const status = getAnswerStatus(question, userAnswers);
                   const correctAnswer = getCorrectAnswer(question);
                   const userAnswer = userAnswers[question.id];
@@ -480,6 +580,7 @@ INSTRUCTIONS FOR AI TUTOR:
                     </div>
                   );
                 })}
+              </div>
               </div>
             </motion.div>
           )}

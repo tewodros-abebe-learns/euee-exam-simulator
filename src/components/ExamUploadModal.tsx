@@ -368,6 +368,14 @@ export default function ExamUploadModal({
 
   const getSubjectName = (subj: string) => subjectDisplayName(subj, t);
 
+  // A folder can be deleted (here or in another tab) while this dialog is open;
+  // the picker must never keep a value that no longer exists.
+  useEffect(() => {
+    if (subjectOptions.length > 0 && !subjectOptions.includes(subject)) {
+      setSubject(subjectOptions.includes('General') ? 'General' : subjectOptions[0]);
+    }
+  }, [subjectOptions, subject]);
+
   const saveNewSubject = () => {
     const savedName = addSubject(newSubject);
     if (!savedName) {
