@@ -112,6 +112,25 @@ How it behaves:
 - Exams created in guest mode are moved into the Google account by the existing
   guest-sync effect on first sign-in.
 
+### The "Dynamic Links shutting down" warning
+
+The Firebase console shows a notice in Authentication saying that **email link
+(passwordless) authentication for mobile apps** and **Cordova OAuth support for
+web apps** stop working when Firebase Dynamic Links shuts down. Neither applies
+here:
+
+- The app never uses email-link / passwordless sign-in (no
+  `sendSignInLinkToEmail` / `signInWithEmailLink` anywhere in `src/`).
+- It is a PWA served over HTTPS, not a Cordova container. "Installed PWA" only
+  means `display-mode: standalone`; the redirect flow still uses the normal web
+  handler at `<project>.firebaseapp.com/__/auth/handler`, not a Dynamic Link.
+- No Dynamic Links SDK, short links or `page.link` domain is used.
+
+The auth methods actually in use are `signInWithPopup`, `signInWithRedirect`,
+`signInWithEmailAndPassword`, `createUserWithEmailAndPassword` and `signOut`.
+If a native store app is ever built, use a Trusted Web Activity or native Google
+sign-in plugins — not Cordova OAuth or email links.
+
 ---
 
 ## 📥 Getting Exams Into the App
