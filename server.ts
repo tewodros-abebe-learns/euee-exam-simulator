@@ -28,6 +28,16 @@ async function startServer() {
     frameguard: false, // REQUIRED for AI Studio preview iframe to work
   }));
 
+  // The app asks for none of these; denying them here means a future dependency
+  // cannot quietly start using the camera or location.
+  app.use((_req, res, next) => {
+    res.setHeader(
+      "Permissions-Policy",
+      "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    );
+    next();
+  });
+
   // CORS: same-origin only unless an explicit allow-list is configured.
   // (The previous wildcard let any website spend this server's AI quota.)
   const allowedOrigins = (process.env.CORS_ORIGIN || '')

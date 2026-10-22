@@ -1,5 +1,21 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertCircle, RefreshCcw, Home } from 'lucide-react';
+import { translations, type Language } from '../i18n/translations';
+
+/**
+ * The boundary sits above the language provider, so it cannot use `useLanguage`.
+ * It reads the stored preference directly and falls back to English.
+ */
+function crashCopy(): (typeof translations)['en'] {
+  let language: Language = 'en';
+  try {
+    const saved = window.localStorage.getItem('language');
+    if (saved === 'am') language = 'am';
+  } catch {
+    // Storage blocked: English is always available.
+  }
+  return translations[language];
+}
 
 interface Props {
   children: ReactNode;
@@ -34,26 +50,26 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
-      let displayMessage = "Something went wrong. Please try again later.";
-      let isFirestoreError = false;
+      const copy = crashCopy();
+      let title = copy.appErrorTitle;
+      let displayMessage = copy.appErrorDesc;
 
+      // Internals never reach the screen. The old code printed the raw error
+      // message (and, for database errors, the raw Firestore text) to the
+      // student, which leaked library details and was untranslatable. Only the
+      // "permission" case is worth distinguishing, because it has an action.
       try {
-        if (this.state.error?.message) {
-          const parsed = JSON.parse(this.state.error.message);
-          if (parsed && typeof parsed === 'object' && parsed.error && parsed.operationType) {
-            isFirestoreError = true;
-            if (parsed.error.includes("Missing or insufficient permissions")) {
-              displayMessage = "You don't have permission to perform this action. Please make sure you are logged in correctly.";
-            } else {
-              displayMessage = `Database error: ${parsed.error}`;
+        const raw = this.state.error?.message;
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object' && parsed.error) {
+            if (String(parsed.error).includes('Missing or insufficient permissions')) {
+              displayMessage = copy.appErrorPermission;
             }
           }
         }
-      } catch (e) {
-        // Not a JSON error message, use default or the raw message
-        if (this.state.error?.message) {
-          displayMessage = this.state.error.message;
-        }
+      } catch {
+        // Not one of our structured errors: the generic copy is already set.
       }
 
       return (
@@ -64,7 +80,7 @@ export default class ErrorBoundary extends Component<Props, State> {
             </div>
             
             <h2 className="text-2xl font-bold text-[var(--text-primary)] mb-4">
-              {isFirestoreError ? "Database Connection Issue" : "Application Error"}
+              {title}
             </h2>
             <p className="text-[var(--text-secondary)] mb-8 leading-relaxed">
               {displayMessage}
@@ -76,14 +92,14 @@ export default class ErrorBoundary extends Component<Props, State> {
                 className="w-full bg-[#8AB4F8] text-gray-900 py-4 rounded-2xl font-bold hover:bg-[#AECBFA] transition-all shadow-lg shadow-[#8AB4F8]/20 flex items-center justify-center gap-2"
               >
                 <RefreshCcw className="w-4 h-4" />
-                Reload Page
+                {copy.reloadPage}
               </button>
               <button
                 onClick={this.handleReset}
                 className="w-full bg-white/5 text-[var(--text-primary)] py-4 rounded-2xl font-bold hover:bg-white/10 transition-all border border-white/10 flex items-center justify-center gap-2"
               >
                 <Home className="w-4 h-4" />
-                Go to Home
+                {copy.home}
               </button>
             </div>
           </div>
