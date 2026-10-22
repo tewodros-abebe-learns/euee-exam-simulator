@@ -2,7 +2,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Default-deny catch-all safety net
+    // Default-deny catch-all safety net. Firestore evaluates every matching
+    // rule and allows the access if ANY rule allows it, so this does not
+    // weaken the explicit rules below — it just means nothing is open by
+    // accident.
     match /{document=**} {
       allow read, write: if false;
     }
@@ -23,83 +26,104 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // Validation for exams collection
+    function isBoundedString(value, maxSize) {
+      return value is string && value.size() <= maxSize;
+    }
+
+    function isPositiveNumberOrNull(value, maxValue) {
+      return value == null || (value is number && value >= 0 && value <= maxValue);
+    }
+
+    // ---------------------------------------------------------------
+    // exams — one document per paper the student created.
+    // ---------------------------------------------------------------
     function isValidExam(data) {
       return data.title is string && data.title.size() > 0 && data.title.size() <= 500
           && data.createdBy is string && data.createdBy == request.auth.uid
-          && (data.subject == null || (data.subject is string && data.subject.size() <= 100))
-          && (data.grade == null || (data.grade is string && data.grade.size() <= 50))
-          && (data.questions == null || (data.questions is list && data.questions.size() <= 500));
+          && (data.subject == null || isBoundedString(data.subject, 100))
+          && (data.grade == null || isBoundedString(data.grade, 50))
+          // A paper with zero questions is unusable, so it is never stored.
+          && data.questions is list && data.questions.size() > 0 && data.questions.size() <= 500
+          // A single exam can never be longer than a day.
+          && (data.timeLimit == null || (data.timeLimit is number && data.timeLimit >= 0 && data.timeLimit <= 86400));
     }
 
     match /exams/{examId} {
       allow get, list: if isSignedIn() && resource.data.createdBy == request.auth.uid;
-      allow create: if isSignedIn() 
-                    && isValidId(examId) 
+      allow create: if isSignedIn()
+                    && isValidId(examId)
                     && incoming().createdBy == request.auth.uid
                     && isValidExam(incoming());
-      allow update: if isSignedIn() 
+      allow update: if isSignedIn()
                     && isValidId(examId)
                     && existing().createdBy == request.auth.uid
+                    // Ownership is immutable, so a document can never be
+                    // "handed over" to another account.
                     && incoming().createdBy == existing().createdBy
                     && isValidExam(incoming());
-      allow delete: if isSignedIn() 
-                    && isValidId(examId) 
+      allow delete: if isSignedIn()
+                    && isValidId(examId)
                     && existing().createdBy == request.auth.uid;
     }
 
-    // Validation for user_exams collection
+    // ---------------------------------------------------------------
+    // user_exams — one document per attempt (in progress or finished).
+    // ---------------------------------------------------------------
     function isValidUserExam(data) {
       return data.userId is string && data.userId == request.auth.uid
-          && data.examId is string && data.examId.size() <= 128
-          && (data.status == null || (data.status is string && data.status.size() <= 50))
-          && (data.score == null || data.score is number)
-          && (data.total == null || data.total is number)
-          && (data.percentage == null || data.percentage is number)
-          && (data.timeLimit == null || data.timeLimit is number)
-          && (data.startTime == null || data.startTime is number);
+          && data.examId is string && data.examId.size() > 0 && data.examId.size() <= 128
+          && (data.status == null || data.status in ['IN_PROGRESS', 'COMPLETED'])
+          && (data.answers == null || (data.answers is map && data.answers.size() <= 500))
+          && isPositiveNumberOrNull(data.score, 100000)
+          && isPositiveNumberOrNull(data.total, 100000)
+          && isPositiveNumberOrNull(data.percentage, 100)
+          && isPositiveNumberOrNull(data.timeLimit, 86400)
+          && isPositiveNumberOrNull(data.duration, 86400 * 7)
+          && (data.startTime == null || (data.startTime is number && data.startTime > 0));
     }
 
     match /user_exams/{sessionId} {
       allow get, list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() 
-                    && isValidId(sessionId) 
+      allow create: if isSignedIn()
+                    && isValidId(sessionId)
                     && incoming().userId == request.auth.uid
                     && isValidUserExam(incoming());
-      allow update: if isSignedIn() 
+      allow update: if isSignedIn()
                     && isValidId(sessionId)
                     && existing().userId == request.auth.uid
                     && incoming().userId == existing().userId
                     && isValidUserExam(incoming());
-      allow delete: if isSignedIn() 
-                    && isValidId(sessionId) 
+      allow delete: if isSignedIn()
+                    && isValidId(sessionId)
                     && existing().userId == request.auth.uid;
     }
 
-    // Validation for sessions collection
+    // ---------------------------------------------------------------
+    // sessions — legacy server-side mirror. Kept locked to the owner; the app
+    // itself no longer writes here (attempts live in user_exams).
+    // ---------------------------------------------------------------
     function isValidSession(data) {
       return data.userId is string && data.userId == request.auth.uid
           && data.examId is string && data.examId.size() <= 128
-          && (data.status == null || (data.status is string && data.status.size() <= 50))
-          && (data.timeLimit == null || data.timeLimit is number)
-          && (data.startTime == null || data.startTime is number);
+          && (data.status == null || data.status in ['IN_PROGRESS', 'COMPLETED'])
+          && (data.timeLimit == null || (data.timeLimit is number && data.timeLimit >= 0))
+          && (data.startTime == null || (data.startTime is number && data.startTime > 0));
     }
 
     match /sessions/{sessionId} {
       allow get, list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow create: if isSignedIn() 
-                    && isValidId(sessionId) 
+      allow create: if isSignedIn()
+                    && isValidId(sessionId)
                     && incoming().userId == request.auth.uid
                     && isValidSession(incoming());
-      allow update: if isSignedIn() 
+      allow update: if isSignedIn()
                     && isValidId(sessionId)
                     && existing().userId == request.auth.uid
                     && incoming().userId == existing().userId
                     && isValidSession(incoming());
-      allow delete: if isSignedIn() 
-                    && isValidId(sessionId) 
+      allow delete: if isSignedIn()
+                    && isValidId(sessionId)
                     && existing().userId == request.auth.uid;
     }
   }
 }
-

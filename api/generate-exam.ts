@@ -25,16 +25,30 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: "Method not allowed. Use POST." });
   }
 
+  res.setHeader("Cache-Control", "no-store");
+
   try {
     const forwarded = req.headers?.["x-forwarded-for"];
     const clientIp =
       (typeof forwarded === "string" ? forwarded.split(",")[0].trim() : "") ||
       (req.socket && req.socket.remoteAddress) ||
       "unknown";
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
-    const result = await processExamGeneration(body, clientIp);
+
+    let body: unknown;
+    if (typeof req.body === "string") {
+      try {
+        body = JSON.parse(req.body);
+      } catch {
+        return res.status(400).json({ error: "The request body could not be read as JSON." });
+      }
+    } else {
+      body = req.body ?? {};
+    }
+
+    const result = await processExamGeneration(body as any, clientIp);
     return res.status(result.status).json(result.data);
   } catch (error: any) {
+    // Log the detail, return something the student can act on.
     console.error("API Serverless Error:", error);
     const errMsg = error?.message || String(error);
     if (errMsg.includes("429") || errMsg.includes("Too Many Requests") || errMsg.includes("RESOURCE_EXHAUSTED")) {
@@ -43,6 +57,8 @@ export default async function handler(req: any, res: any) {
     if (errMsg.includes("SAFETY") || errMsg.includes("blocked")) {
       return res.status(403).json({ error: "The document content was flagged by safety filters. Please try a different file." });
     }
-    return res.status(500).json({ error: errMsg || "Failed to parse exam questions from the document." });
+    return res.status(500).json({
+      error: "The exam service hit an unexpected problem. Please try again, or import a JSON/Markdown file.",
+    });
   }
 }

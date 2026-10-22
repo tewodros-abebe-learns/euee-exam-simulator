@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Loader2, Info, BookOpen, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ExamInterface from './components/ExamInterface';
@@ -27,7 +27,13 @@ import { parseExamText } from './lib/examImport';
 import { ensureSubjectFolder } from './lib/subjectStore';
 import { getCorrectAnswer } from './lib/scoring';
 import { suggestTitleFromFileName, type ImportedExam } from './lib/examSchema';
-import { getExamProgressKey } from './lib/examProgress';
+import { getExamProgressKey, ACTIVE_EXAM_STATE_KEY } from './lib/examProgress';
+import {
+  readActiveExamState,
+  sanitizeQuestions,
+  fitsInStorage,
+  type ActiveExamState,
+} from './lib/activeExamState';
 type View = 'DASHBOARD' | 'UPLOAD' | 'TIMER_SELECTION' | 'EXAM' | 'SUMMARY';
 type Tab = 'HOME' | 'MY_EXAM';
 
@@ -132,51 +138,125 @@ function AppContent() {
     if (themeMeta) themeMeta.setAttribute('content', isDarkMode ? '#0A0A0A' : '#F4F6F8');
   }, [isDarkMode]);
 
-  // Restore in-progress exam state if page was refreshed during active exam
+  /**
+   * Applies a validated snapshot to the app state.
+   * Kept in one place so the mount restore and the recovery below cannot drift.
+   */
+  const applyActiveExamState = useCallback((state: ActiveExamState) => {
+    setExamQuestions(state.examQuestions);
+    setExamTitle(state.examTitle);
+    setSelectedSubject(state.selectedSubject);
+    setSelectedGrade(state.selectedGrade);
+    setCurrentExamId(state.currentExamId);
+    setTimeLimit(state.timeLimit);
+    setStartTime(state.startTime);
+    setSaveProgress(true);
+    setCurrentSessionId(state.currentSessionId);
+    setView('EXAM');
+  }, []);
+
+  // Restore in-progress exam state if page was refreshed during active exam.
+  // The snapshot is validated first: a corrupt or empty one must never drop the
+  // student into an exam screen that has nothing to answer.
   useEffect(() => {
-    try {
-      const savedActiveState = localStorage.getItem('euee_active_exam_state');
-      if (savedActiveState) {
-        const parsed = JSON.parse(savedActiveState);
-        if (parsed && parsed.saveProgress && parsed.examQuestions && parsed.examQuestions.length > 0) {
-          setExamQuestions(parsed.examQuestions);
-          setExamTitle(parsed.examTitle || 'Exam');
-          setSelectedSubject(parsed.selectedSubject || 'General');
-          setSelectedGrade(parsed.selectedGrade || 'Grade 12');
-          setCurrentExamId(parsed.currentExamId || null);
-          setTimeLimit(parsed.timeLimit || null);
-          setStartTime(parsed.startTime || Date.now());
-          setSaveProgress(true);
-          setCurrentSessionId(parsed.currentSessionId || null);
-          setView('EXAM');
+    const restored = readActiveExamState(typeof window === 'undefined' ? null : window.localStorage);
+    if (restored && restored.saveProgress) {
+      applyActiveExamState(restored);
+    } else {
+      // Nothing playable was saved: make sure a stale key cannot linger.
+      try {
+        localStorage.removeItem(ACTIVE_EXAM_STATE_KEY);
+      } catch {}
+    }
+  }, [applyActiveExamState]);
+
+  /**
+   * Last line of defence for the exam screen.
+   *
+   * If the exam view is ever reached without questions (a snapshot that failed
+   * to parse, an exam whose questions were lost, a stale session), try once to
+   * recover from the saved snapshot; otherwise leave the exam and say why,
+   * instead of showing a dead "No questions found" screen.
+   */
+  useEffect(() => {
+    if (view !== 'EXAM' || examQuestions.length > 0) return;
+
+    const snapshot = readActiveExamState(typeof window === 'undefined' ? null : window.localStorage);
+    if (snapshot && snapshot.examQuestions.length > 0) {
+      applyActiveExamState(snapshot);
+      return;
+    }
+
+    let cancelled = false;
+    const recover = async () => {
+      // The exam may live in IndexedDB even when the localStorage snapshot did
+      // not survive (quota, private mode, a cleared cache).
+      let cached: Awaited<ReturnType<typeof offlineStorage.getExamById>> = null;
+      if (currentExamId) {
+        try {
+          cached = await offlineStorage.getExamById(currentExamId);
+        } catch {
+          cached = null;
         }
       }
-    } catch (err) {
-      console.warn("Could not restore active exam state:", err);
-    }
-  }, []);
+      if (cancelled) return;
+
+      const recovered = sanitizeQuestions(cached?.questions);
+      if (recovered.length > 0) {
+        setExamQuestions(recovered);
+        setExamTitle(cached?.title || examTitle || 'Exam');
+        return;
+      }
+
+      setErrorMessage(t('examRestoreFailed'));
+      setView('DASHBOARD');
+    };
+
+    void recover();
+    return () => {
+      cancelled = true;
+    };
+  }, [view, examQuestions.length, currentExamId, examTitle, applyActiveExamState, t]);
+
+  // Remembers the previous view so the cleanup below only fires when this tab
+  // actually leaves the exam. Deleting on every non-exam render would wipe the
+  // snapshot of an exam that is in progress in another tab.
+  const previousViewRef = useRef<View>(view);
 
   // Synchronize active exam state while taking an exam with saveProgress enabled
   useEffect(() => {
+    const leftExam = previousViewRef.current === 'EXAM' && view !== 'EXAM';
+    previousViewRef.current = view;
+
     if (view === 'EXAM' && saveProgress && examQuestions.length > 0) {
-      try {
-        localStorage.setItem('euee_active_exam_state', JSON.stringify({
-          currentExamId,
-          examTitle,
-          selectedSubject,
-          selectedGrade,
-          examQuestions,
-          timeLimit,
-          startTime,
-          saveProgress,
-          currentSessionId
-        }));
-      } catch (err) {
-        console.warn("Could not cache active exam state:", err);
+      const snapshot = {
+        currentExamId,
+        examTitle,
+        selectedSubject,
+        selectedGrade,
+        examQuestions: sanitizeQuestions(examQuestions),
+        timeLimit,
+        startTime: startTime ?? Date.now(),
+        saveProgress,
+        currentSessionId,
+      };
+      // A snapshot that cannot fit is skipped on purpose: a half-written key is
+      // worse than none, because the next load would try to restore it.
+      if (!fitsInStorage(snapshot)) {
+        console.warn('Skipped caching the active exam: the snapshot is too large.');
+        return;
       }
-    } else if (view === 'SUMMARY') {
       try {
-        localStorage.removeItem('euee_active_exam_state');
+        localStorage.setItem(ACTIVE_EXAM_STATE_KEY, JSON.stringify(snapshot));
+      } catch (err) {
+        console.warn('Could not cache active exam state:', err);
+      }
+    } else if (leftExam) {
+      // Leaving the exam (finishing OR exiting) ends the "resume on refresh"
+      // behaviour. An exited attempt is still resumable from the dashboard,
+      // which is where the student expects to find it.
+      try {
+        localStorage.removeItem(ACTIVE_EXAM_STATE_KEY);
       } catch {}
     }
   }, [view, saveProgress, examQuestions, currentExamId, examTitle, selectedSubject, selectedGrade, timeLimit, startTime, currentSessionId]);
@@ -640,8 +720,14 @@ function AppContent() {
   };
 
   const handleContinueSession = (exam: any, session: any) => {
-    if (!exam) return;
-    setExamQuestions(exam.questions || []);
+    // Never open the exam screen on a paper with nothing to answer: the student
+    // would land on a dead end instead of their attempt.
+    const questions = sanitizeQuestions(exam?.questions);
+    if (!exam || questions.length === 0) {
+      setErrorMessage(t('emptyExamError'));
+      return;
+    }
+    setExamQuestions(questions);
     setExamTitle(exam.title || 'Exam Session');
     setSelectedSubject(exam.subject || 'General');
     setSelectedGrade(exam.grade || 'Grade 12');
@@ -777,7 +863,9 @@ function AppContent() {
             />
           )}
 
-          {view === 'EXAM' && (
+          {/* The exam screen only exists when there is something to answer; the
+              effect above recovers or redirects, so no dead end is ever shown. */}
+          {view === 'EXAM' && examQuestions.length > 0 && (
             <ExamInterface
               key="exam"
               questions={examQuestions}

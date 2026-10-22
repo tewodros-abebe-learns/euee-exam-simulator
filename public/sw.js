@@ -72,8 +72,19 @@ self.addEventListener('fetch', (event) => {
           }
           return response;
         })
-        .catch(() => {
-          return caches.match('/index.html').then((cached) => cached || caches.match('/'));
+        .catch(async () => {
+          // Offline and nothing cached: still answer with something the browser
+          // can render instead of rejecting the navigation.
+          const cached = (await caches.match('/index.html')) || (await caches.match('/'));
+          return (
+            cached ||
+            new Response(
+              '<!doctype html><meta charset="utf-8"><title>Offline</title>' +
+                '<body style="font-family:system-ui;padding:2rem;text-align:center">' +
+                '<h1>You are offline</h1><p>Reconnect to open the app.</p></body>',
+              { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+            )
+          );
         })
     );
     return;

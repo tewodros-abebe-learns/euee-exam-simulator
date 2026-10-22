@@ -341,16 +341,21 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
 
       if (currentUser && isFirebaseAuthed && auth.currentUser && auth.currentUser.uid === currentUser.uid && !targetId.startsWith('local_')) {
         try {
+          // Single-field query on purpose: `where('examId') + where('userId')`
+          // needs a composite index, and without it the cleanup silently
+          // failed and left orphaned results behind. Filtering by the indexed
+          // owner field and matching the exam on the client always works.
           const sessionsQuery = query(
             collection(db, 'user_exams'),
-            where('examId', '==', targetId),
             where('userId', '==', currentUser.uid)
           );
           const sessionsSnapshot = await getDocs(sessionsQuery);
-          const deletePromises = sessionsSnapshot.docs.map(sessionDoc => deleteDoc(sessionDoc.ref));
-          await Promise.all(deletePromises);
+          const orphaned = sessionsSnapshot.docs.filter(
+            (sessionDoc) => (sessionDoc.data()?.examId as string | undefined) === targetId
+          );
+          await Promise.all(orphaned.map((sessionDoc) => deleteDoc(sessionDoc.ref)));
         } catch (sessionErr) {
-          console.warn("User sessions cleanup notice:", sessionErr);
+          console.warn('User sessions cleanup notice:', sessionErr);
         }
         await runWithTimeout(
           () => deleteDoc(doc(db, 'exams', targetId)),
