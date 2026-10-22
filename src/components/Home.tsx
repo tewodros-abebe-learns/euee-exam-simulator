@@ -470,18 +470,6 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
                 </button>
               )}
             </div>
-            <div className="relative w-full md:w-auto">
-              <button 
-                onClick={() => {
-                  setUploadModalDefaultTab('upload');
-                  setIsUploadModalOpen(true);
-                }}
-                className="w-full bg-[#8AB4F8] text-gray-900 px-6 py-3.5 rounded-2xl font-bold hover:bg-[#AECBFA] transition-all flex items-center justify-center gap-2 text-sm shadow-md"
-              >
-                <Upload className="w-4 h-4" />
-                {t('uploadNewExam')}
-              </button>
-            </div>
           </div>
 
           {/* Subject Filter */}
@@ -622,17 +610,48 @@ export default function Home({ onContinue, onRetake, onViewSummary, onUpload, on
                   );
                 })
               ) : (
-                <div className="col-span-full py-20 text-center bg-[var(--bg-secondary)] border border-dashed border-[var(--border-color)] rounded-[40px]">
-                  <p className="text-[var(--text-secondary)] mb-4">{t('noExamsFound')}</p>
-                  <button
-                    onClick={() => {
-                      setUploadModalDefaultTab('upload');
-                      setIsUploadModalOpen(true);
-                    }}
-                    className="text-[#8AB4F8] font-bold hover:underline"
-                  >
-                    {t('uploadFirstOne')}
-                  </button>
+                <div className="col-span-full py-16 sm:py-20 px-6 text-center bg-[var(--bg-secondary)] border border-dashed border-[var(--border-color)] rounded-[40px]">
+                  <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-[#8AB4F8]/10 text-[#8AB4F8] flex items-center justify-center">
+                    <FileText className="w-7 h-7" />
+                  </div>
+                  <p className="text-[var(--text-primary)] font-bold mb-1.5">
+                    {searchQuery ? t('noSearchResults') : t('noExamsYetTitle')}
+                  </p>
+                  <p className="text-sm text-[var(--text-secondary)] mb-6 max-w-sm mx-auto leading-relaxed">
+                    {searchQuery ? t('noSearchResultsDesc') : t('noExamsYetDesc')}
+                  </p>
+                  {searchQuery ? (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="text-[#8AB4F8] font-bold hover:underline"
+                    >
+                      {t('clearSearch')}
+                    </button>
+                  ) : (
+                    <div className="flex flex-col sm:flex-row items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUploadModalDefaultTab('upload');
+                          setIsUploadModalOpen(true);
+                        }}
+                        className="w-full sm:w-auto bg-[#8AB4F8] text-gray-900 px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-[#AECBFA] transition-all"
+                      >
+                        {t('uploadNewExam')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUploadModalDefaultTab('paste');
+                          setIsUploadModalOpen(true);
+                        }}
+                        className="w-full sm:w-auto bg-white/5 border border-[var(--border-color)] text-[var(--text-primary)] px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-white/10 transition-all"
+                      >
+                        {t('pasteQuestions')}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
