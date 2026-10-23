@@ -13,7 +13,7 @@ import InitialSetupModal from './components/InitialSetupModal';
 import OfflineBanner from './components/OfflineBanner';
 import SectionBoundary from './components/SectionBoundary';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { runWithTimeout, CRITICAL_WRITE_TIMEOUT_MS, LOCAL_WRITE_TIMEOUT_MS } from './lib/cloudWrite';
+import { runWithTimeout, readWithTimeout, CRITICAL_WRITE_TIMEOUT_MS, LOCAL_WRITE_TIMEOUT_MS } from './lib/cloudWrite';
 import { prepareExamQuestions } from './lib/examQuality';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { OfflineProvider, useOffline } from './contexts/OfflineContext';
@@ -39,6 +39,15 @@ import {
 } from './lib/activeExamState';
 type View = 'DASHBOARD' | 'UPLOAD' | 'TIMER_SELECTION' | 'EXAM' | 'SUMMARY';
 
+/**
+ * Largest file the AI extractor may receive.
+ *
+ * The serverless body limit is 4.5 MB and base64 adds a third, so ~3 MB is the
+ * real ceiling. Files below it that are already structured (JSON, Markdown,
+ * CSV, TXT, text-based PDF) never travel to the server at all.
+ */
+const MAX_AI_UPLOAD_BYTES = 3 * 1024 * 1024;
+
 /** Firestore document ids must match the rules' isValidId() to be addressable. */
 function isSafeDocumentId(id: unknown): id is string {
   return typeof id === 'string' && id.length > 0 && id.length <= 128 && /^[a-zA-Z0-9_-]+$/.test(id);
@@ -59,6 +68,17 @@ function AppContent() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [saveProgress, setSaveProgress] = useState(false);
+  /**
+   * True while the student is drilling only the questions they missed.
+   *
+   * A review is practice on a subset, not a new attempt at the paper. It used
+   * to be saved under a made-up exam id (`…_missed_<timestamp>`), which created
+   * results in Firestore and IndexedDB that pointed at no exam and could never
+   * be reached again. Nothing is persisted for a review.
+   */
+  const [isReviewAttempt, setIsReviewAttempt] = useState(false);
+  /** True while a brand-new paper is being written, so it can only happen once. */
+  const creatingExamRef = useRef(false);
   const [isDarkMode, setIsDarkMode] = useState(() => {
     if (typeof window === 'undefined') return true;
     const savedTheme = safeGetItem('euee_theme');
@@ -290,8 +310,23 @@ function AppContent() {
       guestSyncUidRef.current = currentUser.uid;
       
       try {
-        const localExams = await offlineStorage.getAllExams();
+        const localExams = await readWithTimeout(
+          () => offlineStorage.getAllExams(),
+          [],
+          LOCAL_WRITE_TIMEOUT_MS,
+          'Read device exams for the guest migration'
+        );
         const guestExams = localExams.filter(e => e.createdBy === 'guest');
+        if (guestExams.length === 0) return;
+
+        // Read the attempts once. Doing it inside the loop re-read (and
+        // re-cloned) the whole session store for every guest paper.
+        const sessions = await readWithTimeout(
+          () => offlineStorage.getAllSessions(),
+          [],
+          LOCAL_WRITE_TIMEOUT_MS,
+          'Read device attempts for the guest migration'
+        );
         
         for (const exam of guestExams) {
           if (!isMounted) break;
@@ -313,7 +348,6 @@ function AppContent() {
 
             // Migrate the attempts *before* dropping the old record, so an
             // interrupted sync can never leave the paper without its results.
-            const sessions = await offlineStorage.getAllSessions();
             for (const session of sessions) {
               if (session.examId !== exam.id) continue;
               const updatedSession = { ...session };
@@ -340,6 +374,7 @@ function AppContent() {
                 duration: updatedSession.timeSpent ?? null,
                 lastUpdated: serverTimestamp()
               });
+              await offlineStorage.markSessionSynced(sessionId).catch(() => {});
               if (session.id !== sessionId) {
                 // The old row is only removed once the new one is stored.
                 await offlineStorage.deleteSession(session.id);
@@ -480,6 +515,7 @@ function AppContent() {
       setSelectedGrade(options.grade || 'General');
       setRecommendedTimeLimit(null);
       setCurrentSessionId(null);
+      setIsReviewAttempt(false);
 
       // Local-first: the exam appears immediately, the cloud copy follows.
       await persistNewExam({
@@ -530,6 +566,7 @@ function AppContent() {
     setRecommendedTimeLimit(imported.timeLimit && imported.timeLimit > 0 ? imported.timeLimit : null);
     setCurrentSessionId(null);
     setUserAnswers({});
+    setIsReviewAttempt(false);
 
     await persistNewExam(examData);
 
@@ -581,7 +618,12 @@ function AppContent() {
         }
       }
 
-      if (file.size > 15 * 1024 * 1024) {
+      // Only files that reach the AI extractor are limited here. A Vercel
+      // function cannot receive a body larger than 4.5 MB, and base64 inflates
+      // a file by a third, so anything past ~3 MB is rejected by the platform
+      // before the server sees it. Saying so here is honest; the message points
+      // at the formats that are read on the device instead.
+      if (file.size > MAX_AI_UPLOAD_BYTES) {
         throw new Error(t('fileTooLargeAi'));
       }
       const [base64, extractedText] = await Promise.all([
@@ -618,8 +660,13 @@ function AppContent() {
     // Never inherit a previous attempt's snapshots for this paper.
     safeRemoveItem(getExamProgressKey(currentExamId, examTitle));
     
-    // Persist the exam the user just built if it has no id yet
-    if (!currentExamId) {
+    // Persist the exam the user just built if it has no id yet.
+    //
+    // Guarded: two quick taps on a timer option used to run this twice with the
+    // same stale `currentExamId` (still null in both closures), which created
+    // two copies of one paper.
+    if (!currentExamId && !creatingExamRef.current) {
+      creatingExamRef.current = true;
       try {
         const examData = {
           title: examTitle,
@@ -634,6 +681,8 @@ function AppContent() {
         await persistNewExam(examData);
       } catch (e) {
         console.error(e);
+      } finally {
+        creatingExamRef.current = false;
       }
     }
     
@@ -660,22 +709,25 @@ function AppContent() {
     });
 
     // Answers are stored with the session so results can be reviewed later.
+    // A review of missed questions is practice, so it leaves no record behind.
     try {
-      await saveSessionLocally({
-        id: newSessionId,
-        examId: resolvedExamId,
-        userId,
-        status: 'COMPLETED',
-        score: graded.correct,
-        total: graded.graded,
-        percentage: graded.percentage,
-        startTime: startedAt,
-        timeLimit: timeLimit || 0,
-        timeSpent: duration,
-        lastUpdated: Date.now(),
-        syncedWithCloud: false,
-        answers,
-      });
+      if (!isReviewAttempt) {
+        await saveSessionLocally({
+          id: newSessionId,
+          examId: resolvedExamId,
+          userId,
+          status: 'COMPLETED',
+          score: graded.correct,
+          total: graded.graded,
+          percentage: graded.percentage,
+          startTime: startedAt,
+          timeLimit: timeLimit || 0,
+          timeSpent: duration,
+          lastUpdated: Date.now(),
+          syncedWithCloud: false,
+          answers,
+        });
+      }
     } catch (e) {
       console.warn('Could not persist the exam session locally:', e);
     }
@@ -687,7 +739,7 @@ function AppContent() {
       Boolean(auth.currentUser) &&
       auth.currentUser!.uid === currentUser!.uid;
 
-    if (canWriteCloud) {
+    if (canWriteCloud && !isReviewAttempt) {
       // Deterministic id keeps the local and cloud copies of one attempt in
       // sync. The write is bounded so a stalled backend cannot stop the
       // student from seeing their results; the local copy is already saved and
@@ -709,10 +761,16 @@ function AppContent() {
             lastUpdated: serverTimestamp(),
           }),
         CRITICAL_WRITE_TIMEOUT_MS
-      );
+      ).then((written) => {
+        // The attempt is on the server, so it must not be replayed later. It
+        // used to stay marked unsynced forever, which re-uploaded every
+        // finished attempt on each reconnect.
+        if (!written) return;
+        void offlineStorage.markSessionSynced(newSessionId).catch(() => {});
+      });
     }
 
-    setCurrentSessionId(newSessionId);
+    if (!isReviewAttempt) setCurrentSessionId(newSessionId);
 
     safeRemoveItem(ACTIVE_EXAM_STATE_KEY);
     safeRemoveItem(getExamProgressKey(currentExamId, examTitle));
@@ -722,7 +780,7 @@ function AppContent() {
 
   const handleExitExam = async (answers: Record<string, string> = {}) => {
     // Keep an in-progress session so "Continue" on the dashboard is real.
-    if (saveProgress && currentExamId && examQuestions.length > 0) {
+    if (!isReviewAttempt && saveProgress && currentExamId && examQuestions.length > 0) {
       const sessionId = currentSessionId || `session_${Date.now()}`;
       try {
         await saveSessionLocally({
@@ -762,6 +820,7 @@ function AppContent() {
     // A fresh attempt must never show the previous attempt's answers.
     setUserAnswers({});
     setCurrentSessionId(null);
+    setIsReviewAttempt(false);
     setTimeLimit(null);
     setView('TIMER_SELECTION');
   };
@@ -790,6 +849,7 @@ function AppContent() {
     // and the whole attempt vanished from the screen (and from the exit path).
     setSaveProgress(true);
     setCurrentSessionId(session?.id);
+    setIsReviewAttempt(false);
     // A resumed attempt whose clock already ran out must not silently restart.
     if (session?.timeLimit > 0) {
       const remaining = session.timeLimit - Math.floor((Date.now() - (session.startTime || Date.now())) / 1000);
@@ -981,7 +1041,8 @@ function AppContent() {
                       Object.entries(userAnswers).filter(([id]) => missed.some((q: Question) => q.id === id))
                     )
                   );
-                  setCurrentExamId(`${currentExamId || 'exam'}_missed_${Date.now()}`);
+                  // The paper keeps its own id: a review is not a new exam.
+                  setIsReviewAttempt(true);
                   setTimeLimit(null);
                   setRecommendedTimeLimit(null);
                   setStartTime(Date.now());
@@ -1003,6 +1064,7 @@ function AppContent() {
                   setExamQuestions([]);
                   setUserAnswers({});
                   setLastResult(null);
+                  setIsReviewAttempt(false);
                   setCurrentExamId(null);
                   setCurrentSessionId(null);
                   setTimeLimit(null);
@@ -1023,6 +1085,10 @@ function AppContent() {
                   initial={{ opacity: 0, y: 40, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: 40, scale: 0.95 }}
+                  // A failure the student cannot see (screen reader) is a
+                  // failure they cannot act on.
+                  role="alert"
+                  aria-live="assertive"
                   className={`fixed bottom-5 right-5 p-4 sm:p-5 rounded-2xl shadow-2xl max-w-md z-50 border backdrop-blur-md ${
                     isBusy
                       ? 'bg-[#1e3a8a]/95 border-[#8AB4F8]/50 text-blue-50'

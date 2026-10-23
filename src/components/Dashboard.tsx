@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { collection, query, where, onSnapshot, deleteDoc, doc, updateDoc, getDocs } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrorHandler';
 import { db, auth } from '../firebase';
@@ -14,6 +14,8 @@ import ExportExamButton from './ExportExamButton';
 import type { ImportedExam } from '../lib/examSchema';
 
 import { forgetActiveExam } from '../lib/activeExamState';
+import { readSeenExamIds, writeSeenExamIds, findRemovedExamIds } from '../lib/cloudReconcile';
+import { lockScroll, unlockScroll } from '../lib/scrollLock';
 import { offlineStorage } from '../lib/offlineStorage';
 import { gradeLabelKey, subjectDisplayName } from '../lib/subjects';
 import { sortByRecency, toMillis } from '../lib/time';
@@ -116,6 +118,25 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
 
+  /**
+   * The dialog that opens takes the focus, and closing it puts the focus back
+   * on the card the student came from. Without the second half, a keyboard user
+   * was dropped at the top of the document after every rename.
+   */
+  const anyDialogOpen = Boolean(deletingExamId || renamingExam || movingExam);
+  const lastFocusedRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (anyDialogOpen) {
+      lastFocusedRef.current = (document.activeElement as HTMLElement | null) ?? null;
+      return;
+    }
+    const target = lastFocusedRef.current;
+    lastFocusedRef.current = null;
+    if (target && typeof target.focus === 'function' && document.contains(target)) {
+      target.focus();
+    }
+  }, [anyDialogOpen]);
+
   // Escape closes whichever confirmation dialog is open, so a stray key press
   // never traps the student inside a modal.
   useEffect(() => {
@@ -130,16 +151,16 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [deletingExamId, renamingExam, movingExam, isFolderManagerOpen, isDeleting, isUpdating]);
 
+  // One shared lock: the dialog that closes first must not unlock the page
+  // while another one is still open.
+  const modalOpen = Boolean(
+    deletingExamId || renamingExam || movingExam || isUploadModalOpen || isFolderManagerOpen
+  );
   useEffect(() => {
-    if (deletingExamId || renamingExam || movingExam || isUploadModalOpen || isFolderManagerOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
-    return () => {
-      document.body.style.overflow = '';
-    };
-  }, [deletingExamId, renamingExam, movingExam, isUploadModalOpen, isFolderManagerOpen]);
+    if (!modalOpen) return;
+    lockScroll();
+    return () => unlockScroll();
+  }, [modalOpen]);
 
   // Last-resort failsafe: whatever is slow (IndexedDB, a stalled listener), the
   // list must never be stuck behind a spinner.
@@ -168,7 +189,20 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
         
         if (!isMounted) return;
 
-        const customLocalExams = localExams;
+        /**
+         * The device copy is not per-account, so a shared phone or a browser in
+         * a computer lab showed the previous student's papers to whoever signed
+         * in next — and their attempts were then written under the new uid.
+         * Signed in, only this account's papers and the device's guest papers
+         * are listed. Guests still see everything, so signing out never hides
+         * the library the student built on this device.
+         */
+        const ownerUid = currentUser?.uid;
+        const customLocalExams = ownerUid
+          ? localExams.filter(
+              (exam) => !exam.createdBy || exam.createdBy === 'guest' || exam.createdBy === ownerUid
+            )
+          : localExams;
 
         setExams(prev => {
           const map = new Map<string, Exam>();
@@ -238,11 +272,38 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
       unsubscribeExams = onSnapshot(examsQuery, (snapshot) => {
         // Deleted-here-but-not-yet-in-the-cloud exams must not reappear, and a
         // pending rename must win over the cloud's older title.
+        const snapshotIds = snapshot.docs.map(examDoc => examDoc.id);
         const cloudExams = applyExamMutations(
           snapshot.docs
             .map(doc => ({ id: doc.id, ...doc.data() } as Exam))
             .filter(doc => !isExamDeleted(doc.id))
         );
+
+        // A paper that the server no longer has was deleted somewhere else;
+        // the device copy must go too, or it stays in the library forever.
+        const uid = currentUser.uid;
+        const removedIds = findRemovedExamIds(readSeenExamIds(uid), snapshotIds);
+        writeSeenExamIds(uid, snapshotIds);
+        if (removedIds.length > 0) {
+          const removed = new Set(removedIds);
+          setExams(prev => prev.filter(exam => !removed.has(exam.id)));
+          setUserExams(prev => prev.filter(session => !removed.has(session.examId)));
+          for (const examId of removedIds) {
+            // The device copy and any unsent work for it go with it. Bounded
+            // and best-effort: the UI has already moved on.
+            void runWithTimeout(
+              () => offlineStorage.deleteExamCascade(examId),
+              LOCAL_WRITE_TIMEOUT_MS,
+              'Remove an exam that was deleted elsewhere'
+            );
+            void runWithTimeout(
+              () => offlineStorage.clearSyncQueueForExam(examId),
+              LOCAL_WRITE_TIMEOUT_MS,
+              'Clear queued work for an exam deleted elsewhere'
+            );
+            forgetActiveExam(examId);
+          }
+        }
         setExams(prev => {
           const map = new Map<string, Exam>();
           prev.forEach(pe => map.set(pe.id, pe));
@@ -429,7 +490,11 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
 
   const filteredExams = useMemo(() => {
     return exams.filter(exam => {
-      const matchesSearch = exam.title.toLowerCase().includes(searchQuery.toLowerCase());
+      const needle = searchQuery.trim().toLowerCase();
+      const matchesSearch =
+        needle.length === 0 ||
+        exam.title.toLowerCase().includes(needle) ||
+        (exam.subject || '').toLowerCase().includes(needle);
       // Folders are mutually exclusive: choosing "General" shows the papers
       // that belong to no other folder, never a second copy of everything.
       const subjectOk =
@@ -902,7 +967,7 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
               <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{t('deleteExamTitle')}</h3>
               <p className="text-[var(--text-secondary)] mb-8">{t('deleteExamConfirm')}</p>
               <div className="flex gap-3">
-                <button onClick={() => setDeletingExamId(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
+                <button autoFocus onClick={() => setDeletingExamId(null)} className="flex-1 bg-white/5 text-[var(--text-primary)] py-3 rounded-xl font-bold hover:bg-white/10 transition-all">{t('cancel')}</button>
                 <button onClick={confirmDeleteExam} disabled={isDeleting} className="flex-1 bg-red-400 text-white py-3 rounded-xl font-bold hover:bg-red-500 transition-all flex items-center justify-center gap-2">
                   {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : t('delete')}
                 </button>

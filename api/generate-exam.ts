@@ -1,5 +1,12 @@
 import { processExamGeneration } from "../src/server/examService";
 
+/**
+ * Extracting a 60-question booklet and writing its JSON takes far longer than
+ * a default serverless invocation allows, and the function was being killed
+ * mid-generation. 60s is the ceiling on the Hobby plan; the plan can raise it.
+ */
+export const maxDuration = 60;
+
 export default async function handler(req: any, res: any) {
   // CORS: only allow explicitly configured origins. The browser calls this
   // endpoint same-origin, so no wildcard header is needed (and a wildcard let

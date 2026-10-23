@@ -23,6 +23,7 @@ import { useSubjects } from '../lib/subjectStore';
 import { EXAM_JSON_TEMPLATE, suggestTitleFromFileName, type ImportReport, type ImportedExam } from '../lib/examSchema';
 import { parseExamText } from '../lib/examImport';
 import { buildAiPrompt, buildSampleFile, type SampleFormat } from '../lib/examSamples';
+import { lockScroll, unlockScroll } from '../lib/scrollLock';
 
 interface ExamUploadModalProps {
   isOpen: boolean;
@@ -142,12 +143,9 @@ export default function ExamUploadModal({
     : Array.from(new Set(LOCAL_FORMATS.flatMap((option) => option.accept))));
 
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-    }
-    return () => {
-      document.body.style.overflow = '';
-    };
+    if (!isOpen) return;
+    lockScroll();
+    return () => unlockScroll();
   }, [isOpen]);
 
   useEffect(() => {

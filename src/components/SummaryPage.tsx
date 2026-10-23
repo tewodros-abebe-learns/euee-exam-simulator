@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle2,
   Copy,
@@ -55,6 +55,8 @@ interface AIPlatform {
 }
 
 const LETTERS = 'ABCDEFGHIJ';
+/** How many answered questions the review draws at a time. */
+const REVIEW_PAGE_SIZE = 20;
 
 /** One number + label inside the result card. No boxes, no repeated words. */
 function Metric({
@@ -124,6 +126,7 @@ export default function SummaryPage({
   // clicking Correct / Incorrect / Skipped narrows it to exactly those.
   const [reviewFilter, setReviewFilter] = useState<'all' | 'correct' | 'incorrect' | 'skipped'>('all');
   const [showAiTools, setShowAiTools] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(REVIEW_PAGE_SIZE);
   const [expandedExplanations, setExpandedExplanations] = useState<Record<string, boolean>>({});
 
   const result = useMemo(() => gradeExam(questions, userAnswers), [questions, userAnswers]);
@@ -144,6 +147,12 @@ export default function SummaryPage({
       ? reviewRows
       : reviewRows.filter((row) => row.status === reviewFilter);
 
+  // Rendering a 60–100 question review means 300+ markdown + KaTeX trees in one
+  // commit, which froze the screen for seconds on a phone. The list is drawn a
+  // page at a time instead; the filters still apply to everything.
+  const shownRows = visibleRows.slice(0, visibleCount);
+  const hiddenCount = visibleRows.length - shownRows.length;
+
   const filterLabel =
     reviewFilter === 'correct'
       ? t('correct')
@@ -152,6 +161,11 @@ export default function SummaryPage({
         : reviewFilter === 'skipped'
           ? t('skipped')
           : t('allQuestions');
+
+  // A new filter (or reopening the panel) starts from the first page again.
+  useEffect(() => {
+    setVisibleCount(REVIEW_PAGE_SIZE);
+  }, [reviewFilter, showReview]);
 
   /** Clicking a number opens the review on those questions; clicking again clears. */
   const toggleFilter = (filter: 'correct' | 'incorrect' | 'skipped', count: number) => {
@@ -504,7 +518,7 @@ INSTRUCTIONS FOR AI TUTOR:
                   </div>
                 )}
               <div className="space-y-2.5">
-                {visibleRows.map(({ question, index }) => {
+                {shownRows.map(({ question, index }) => {
                   const status = getAnswerStatus(question, userAnswers);
                   const correctAnswer = getCorrectAnswer(question);
                   const userAnswer = userAnswers[question.id];
@@ -581,6 +595,18 @@ INSTRUCTIONS FOR AI TUTOR:
                   );
                 })}
               </div>
+
+              {hiddenCount > 0 && (
+                <div className="mt-3 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCount((previous) => previous + REVIEW_PAGE_SIZE)}
+                    className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-secondary)] px-4 py-2 text-xs font-bold text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-accent)]"
+                  >
+                    {t('showMoreQuestions', { count: Math.min(hiddenCount, REVIEW_PAGE_SIZE) })}
+                  </button>
+                </div>
+              )}
               </div>
             </motion.div>
           )}

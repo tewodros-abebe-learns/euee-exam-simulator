@@ -1,4 +1,4 @@
-import { Component, ReactNode } from 'react';
+import { Component, memo, type ReactNode } from 'react';
 import 'katex/dist/katex.min.css';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
@@ -49,7 +49,13 @@ class LatexErrorBoundary extends Component<LatexErrorBoundaryProps, LatexErrorBo
  * not already provide, and it corrupted real question text.
  */
 
-export default function LatexText({ text }: { text: any }) {
+/**
+ * Parsing markdown + KaTeX is the most expensive thing on the exam and review
+ * screens, and a question's text never changes while it is on screen. Memoising
+ * it means a parent re-render (a tick, a filter, a new answer) no longer
+ * re-parses every question on the page.
+ */
+function LatexText({ text }: { text: any }) {
   if (text === null || text === undefined) return null;
   const rawString = typeof text === 'string' ? text : String(text);
   if (!rawString.trim()) return null;
@@ -82,3 +88,4 @@ export default function LatexText({ text }: { text: any }) {
   );
 }
 
+export default memo(LatexText);
