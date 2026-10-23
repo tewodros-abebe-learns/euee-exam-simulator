@@ -8,6 +8,7 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { FileText, Trash2, Edit2, Loader2, Search, FolderCog, FolderOpen, Upload, Type, X } from 'lucide-react';
 import ExamUploadModal from './ExamUploadModal';
+import SectionBoundary from './SectionBoundary';
 import FolderManager from './FolderManager';
 import ExportExamButton from './ExportExamButton';
 import type { ImportedExam } from '../lib/examSchema';
@@ -15,8 +16,14 @@ import type { ImportedExam } from '../lib/examSchema';
 import { forgetActiveExam } from '../lib/activeExamState';
 import { offlineStorage } from '../lib/offlineStorage';
 import { gradeLabelKey, subjectDisplayName } from '../lib/subjects';
+import { sortByRecency, toMillis } from '../lib/time';
 import { useSubjects, folderForSubject } from '../lib/subjectStore';
-import { runWithTimeout, LOCAL_WRITE_TIMEOUT_MS, CLOUD_WRITE_TIMEOUT_MS } from '../lib/cloudWrite';
+import {
+  runWithTimeout,
+  readWithTimeout,
+  LOCAL_WRITE_TIMEOUT_MS,
+  CLOUD_WRITE_TIMEOUT_MS,
+} from '../lib/cloudWrite';
 import {
   applyExamMutations,
   clearExamMutation,
@@ -49,6 +56,30 @@ interface UserExam {
   timeSpent?: number;
   duration?: number;
   lastUpdated: any;
+}
+
+/** Keeps the previous array when the content is identical. */
+function sameOrNext<T>(previous: T[], next: T[], signature: (items: T[]) => string): T[] {
+  return signature(previous) === signature(next) ? previous : next;
+}
+
+/** Cheap identity of a list, so an unchanged snapshot never triggers a render. */
+function examsSignature(exams: Exam[]): string {
+  return exams
+    .map(
+      (exam) =>
+        `${exam.id}|${exam.title}|${exam.subject}|${exam.grade || ''}|${toMillis(exam.createdAt)}|${exam.questions?.length ?? 0}`
+    )
+    .join('\u0000');
+}
+
+function sessionsSignature(sessions: UserExam[]): string {
+  return sessions
+    .map(
+      (session) =>
+        `${session.id}|${session.examId}|${session.status}|${session.score ?? ''}|${session.percentage ?? ''}|${toMillis(session.lastUpdated)}|${Object.keys(session.answers || {}).length}`
+    )
+    .join('\u0000');
 }
 
 interface DashboardProps {
@@ -122,8 +153,18 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
 
     const loadOfflineData = async () => {
       try {
-        const localExams = await offlineStorage.getAllExams();
-        const localSessions = await offlineStorage.getAllSessions(currentUser?.uid || undefined);
+        const localExams = await readWithTimeout(
+          () => offlineStorage.getAllExams(),
+          [],
+          LOCAL_WRITE_TIMEOUT_MS,
+          'Load device exams'
+        );
+        const localSessions = await readWithTimeout(
+          () => offlineStorage.getAllSessions(currentUser?.uid || undefined),
+          [],
+          LOCAL_WRITE_TIMEOUT_MS,
+          'Load device attempts'
+        );
         
         if (!isMounted) return;
 
@@ -142,13 +183,8 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
             });
           });
           prev.forEach(pe => map.set(pe.id, pe));
-          const list = Array.from(map.values());
-          list.sort((a, b) => {
-            const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt || 0);
-            const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt || 0);
-            return timeB - timeA;
-          });
-          return list;
+          const list = sortByRecency(Array.from(map.values()), (exam) => exam.createdAt, (exam) => exam.title);
+          return sameOrNext(prev, list, examsSignature);
         });
 
         setUserExams(prev => {
@@ -171,13 +207,8 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
             });
           });
           prev.forEach(pe => map.set(pe.id, pe));
-          const list = Array.from(map.values());
-          list.sort((a, b) => {
-            const timeA = a.lastUpdated?.toMillis ? a.lastUpdated.toMillis() : (a.lastUpdated || 0);
-            const timeB = b.lastUpdated?.toMillis ? b.lastUpdated.toMillis() : (b.lastUpdated || 0);
-            return timeB - timeA;
-          });
-          return list;
+          const list = sortByRecency(Array.from(map.values()), (session) => session.lastUpdated, (session) => session.id);
+          return sameOrNext(prev, list, sessionsSignature);
         });
         setLoading(false);
       } catch (err) {
@@ -216,13 +247,8 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
           const map = new Map<string, Exam>();
           prev.forEach(pe => map.set(pe.id, pe));
           cloudExams.forEach(ce => map.set(ce.id, ce));
-          const list = Array.from(map.values());
-          list.sort((a, b) => {
-            const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt || 0);
-            const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt || 0);
-            return timeB - timeA;
-          });
-          return list;
+          const list = sortByRecency(Array.from(map.values()), (exam) => exam.createdAt, (exam) => exam.title);
+          return sameOrNext(prev, list, examsSignature);
         });
       }, (error) => {
         handleFirestoreError(error, OperationType.GET, 'exams');
@@ -239,13 +265,8 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
           const map = new Map<string, UserExam>();
           prev.forEach(pe => map.set(pe.id, pe));
           cloudUserExams.forEach(ce => map.set(ce.id, ce));
-          const list = Array.from(map.values());
-          list.sort((a, b) => {
-            const timeA = a.lastUpdated?.toMillis ? a.lastUpdated.toMillis() : (a.lastUpdated || 0);
-            const timeB = b.lastUpdated?.toMillis ? b.lastUpdated.toMillis() : (b.lastUpdated || 0);
-            return timeB - timeA;
-          });
-          return list;
+          const list = sortByRecency(Array.from(map.values()), (session) => session.lastUpdated, (session) => session.id);
+          return sameOrNext(prev, list, sessionsSignature);
         });
         setLoading(false);
       }, (error) => {
@@ -307,17 +328,21 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
         try {
           if (op.type === 'delete') {
             // Remove its sessions first, exactly like an online delete.
-            try {
-              const sessionsSnapshot = await getDocs(
-                query(collection(db, 'user_exams'), where('userId', '==', currentUser.uid))
-              );
-              const orphaned = sessionsSnapshot.docs.filter(
-                sessionDoc => (sessionDoc.data()?.examId as string | undefined) === op.id
-              );
-              await Promise.all(orphaned.map(sessionDoc => deleteDoc(sessionDoc.ref)));
-            } catch (sessionErr) {
-              console.warn('Session cleanup during replay:', sessionErr);
-            }
+            // Bounded: a stalled query here would block every later replay.
+            await readWithTimeout(
+              async () => {
+                const sessionsSnapshot = await getDocs(
+                  query(collection(db, 'user_exams'), where('userId', '==', currentUser.uid))
+                );
+                const orphaned = sessionsSnapshot.docs.filter(
+                  sessionDoc => (sessionDoc.data()?.examId as string | undefined) === op.id
+                );
+                await Promise.all(orphaned.map(sessionDoc => deleteDoc(sessionDoc.ref)));
+              },
+              undefined,
+              CLOUD_WRITE_TIMEOUT_MS,
+              'Session cleanup during replay'
+            );
             const confirmed = await runWithTimeout(
               () => deleteDoc(doc(db, 'exams', op.id)),
               CLOUD_WRITE_TIMEOUT_MS,
@@ -386,6 +411,22 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
   const getSubjectName = (subj: string) => subjectDisplayName(subj, t);
   const getGradeName = (grd?: string) => t(gradeLabelKey(grd));
 
+  /**
+   * The newest attempt per exam, computed once per change of the attempt list.
+   * The card used to filter the whole attempt array for every exam on every
+   * render, which is what made a large library feel sluggish.
+   */
+  const latestSessionByExam = useMemo(() => {
+    const map = new Map<string, UserExam>();
+    for (const session of userExams) {
+      const existing = map.get(session.examId);
+      if (!existing || toMillis(session.lastUpdated) > toMillis(existing.lastUpdated)) {
+        map.set(session.examId, session);
+      }
+    }
+    return map;
+  }, [userExams]);
+
   const filteredExams = useMemo(() => {
     return exams.filter(exam => {
       const matchesSearch = exam.title.toLowerCase().includes(searchQuery.toLowerCase());
@@ -415,7 +456,12 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
     try {
       // The device copy is the source of truth for what the student just did;
       // it is written first so an unreachable backend cannot swallow the edit.
-      const cached = await offlineStorage.getExamById(renamingExam.id);
+      const cached = await readWithTimeout(
+        () => offlineStorage.getExamById(renamingExam.id),
+        null,
+        LOCAL_WRITE_TIMEOUT_MS,
+        'Rename exam (local read)'
+      );
       if (cached) {
         await runWithTimeout(
           () => offlineStorage.saveExam({ ...cached, title: updatedTitle }),
@@ -454,7 +500,12 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
     const movingId = movingExam.id;
     const targetSubject = newSubject;
     try {
-      const cached = await offlineStorage.getExamById(movingId);
+      const cached = await readWithTimeout(
+        () => offlineStorage.getExamById(movingId),
+        null,
+        LOCAL_WRITE_TIMEOUT_MS,
+        'Move exam (local read)'
+      );
       if (cached) {
         await runWithTimeout(
           () => offlineStorage.saveExam({ ...cached, subject: targetSubject }),
@@ -485,15 +536,22 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
     }
   };
 
+  /**
+   * Deletes one paper.
+   *
+   * The device copy is removed first, so the click always takes effect even
+   * with no connection. The cloud work is then deliberately *not* awaited: this
+   * used to run a `user_exams` collection query before the `deleteDoc`, and on a
+   * slow or offline connection that query never settled — the dialog sat on
+   * "deleting…" forever. The pending delete is recorded before the write, so a
+   * failure replays later instead of the paper coming back.
+   */
   const confirmDeleteExam = async () => {
     if (!deletingExamId) return;
-    setIsDeleting(true);
-    const path = `exams/${deletingExamId}`;
     const targetId = deletingExamId;
+    setIsDeleting(true);
+
     try {
-      // Remove it from the device first so the click always takes effect.
-      // The cascade also clears this exam's attempts, which would otherwise
-      // stay in the database forever as unreachable rows.
       await runWithTimeout(
         () => offlineStorage.deleteExamCascade(targetId),
         LOCAL_WRITE_TIMEOUT_MS,
@@ -501,44 +559,61 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
       );
       // Any unsent work for this paper dies with it, otherwise the attempt's
       // queued save would upload an orphaned result on the next reconnect.
-      await offlineStorage.clearSyncQueueForExam(targetId).catch(() => {});
+      await runWithTimeout(
+        () => offlineStorage.clearSyncQueueForExam(targetId),
+        LOCAL_WRITE_TIMEOUT_MS,
+        'Clear queued sync for the deleted exam'
+      );
       // A deleted paper must not come back on the next refresh.
       forgetActiveExam(targetId);
-      setExams(prev => prev.filter(e => e.id !== targetId));
-      const cloudEligible = canWriteCloud(targetId);
-      if (cloudEligible) queueExamDelete(targetId);
 
-      if (cloudEligible) {
-        try {
-          // Single-field query on purpose: `where('examId') + where('userId')`
-          // needs a composite index, and without it the cleanup silently
-          // failed and left orphaned results behind. Filtering by the indexed
-          // owner field and matching the exam on the client always works.
-          const sessionsQuery = query(
-            collection(db, 'user_exams'),
-            where('userId', '==', currentUser.uid)
-          );
-          const sessionsSnapshot = await getDocs(sessionsQuery);
-          const orphaned = sessionsSnapshot.docs.filter(
-            (sessionDoc) => (sessionDoc.data()?.examId as string | undefined) === targetId
-          );
-          await Promise.all(orphaned.map((sessionDoc) => deleteDoc(sessionDoc.ref)));
-        } catch (sessionErr) {
-          console.warn('User sessions cleanup notice:', sessionErr);
-        }
-        const confirmed = await runWithTimeout(
-          () => deleteDoc(doc(db, 'exams', targetId)),
-          CLOUD_WRITE_TIMEOUT_MS,
-          'Delete exam (cloud)'
-        );
-        if (confirmed) clearExamMutation(targetId);
+      setExams(prev => prev.filter(exam => exam.id !== targetId));
+      setUserExams(prev => prev.filter(session => session.examId !== targetId));
+
+      // The student's part is done: close the dialog now.
+      setDeletingExamId(null);
+
+      if (canWriteCloud(targetId) && currentUser) {
+        queueExamDelete(targetId);
+        void deleteExamInCloud(targetId, currentUser.uid);
       }
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
-    } finally {
+      handleFirestoreError(error, OperationType.DELETE, `exams/${targetId}`);
       setDeletingExamId(null);
+    } finally {
       setIsDeleting(false);
     }
+  };
+
+  /**
+   * Best-effort cloud half of a delete: its attempts first, then the paper.
+   * Every step is bounded, so a stalled network can only delay a replay.
+   */
+  const deleteExamInCloud = async (examId: string, uid: string) => {
+    await runWithTimeout(
+      async () => {
+        // Single-field query on purpose: `where('examId') + where('userId')`
+        // needs a composite index, and without it the cleanup silently failed
+        // and left orphaned results behind.
+        const sessionsSnapshot = await getDocs(
+          query(collection(db, 'user_exams'), where('userId', '==', uid))
+        );
+        const orphaned = sessionsSnapshot.docs.filter(
+          sessionDoc => (sessionDoc.data()?.examId as string | undefined) === examId
+        );
+        await Promise.all(orphaned.map(sessionDoc => deleteDoc(sessionDoc.ref)));
+      },
+      CLOUD_WRITE_TIMEOUT_MS,
+      'Delete exam attempts (cloud)'
+    );
+
+    const confirmed = await runWithTimeout(
+      () => deleteDoc(doc(db, 'exams', examId)),
+      CLOUD_WRITE_TIMEOUT_MS,
+      'Delete exam (cloud)'
+    );
+    // Only a confirmed delete clears the tombstone; otherwise it replays.
+    if (confirmed) clearExamMutation(examId);
   };
 
   return (
@@ -653,13 +728,11 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredExams.length > 0 ? (
                 filteredExams.map((exam) => {
-                  const sessions = userExams.filter(ue => ue.examId === exam.id);
-                  const latestSession = sessions[0];
+                  const latestSession = latestSessionByExam.get(exam.id);
 
                   return (
                     <motion.div 
                       key={exam.id}
-                      layout
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
                       className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-3xl p-6 hover:border-gray-700 transition-all group"
@@ -916,15 +989,17 @@ export default function Dashboard({ onContinue, onRetake, onViewSummary, onUploa
 
       {/* Exam Upload Modal */}
       {onUpload && onProcessText && (
-        <ExamUploadModal
-          isOpen={isUploadModalOpen}
-          onClose={() => setIsUploadModalOpen(false)}
-          onUpload={onUpload}
-          onProcessText={onProcessText}
-          onImportExam={onImportExam}
-          isParsing={isParsing}
-          defaultTab={uploadModalDefaultTab}
-        />
+        <SectionBoundary resetKey={isUploadModalOpen}>
+          <ExamUploadModal
+            isOpen={isUploadModalOpen}
+            onClose={() => setIsUploadModalOpen(false)}
+            onUpload={onUpload}
+            onProcessText={onProcessText}
+            onImportExam={onImportExam}
+            isParsing={isParsing}
+            defaultTab={uploadModalDefaultTab}
+          />
+        </SectionBoundary>
       )}
     </div>
   );

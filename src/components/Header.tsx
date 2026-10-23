@@ -231,11 +231,19 @@ export default function Header({
 
       <div className="flex items-center gap-2 sm:gap-3">
         <div className="relative" ref={menuRef}>
+          {/*
+            Icon only: the name (and the email) belongs inside the panel, which
+            the student opens deliberately. A name printed in the header was
+            exposing personal detail on every screen, and it competed with the
+            navigation on small displays. It stays available to assistive tech
+            through the label below.
+          */}
           <button
             type="button"
             onClick={() => setIsMenuOpen(!isMenuOpen)}
-            className="px-3 sm:px-3.5 py-2 rounded-2xl bg-[var(--bg-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] hover:border-[#8AB4F8]/50 transition-all font-bold text-xs flex items-center gap-2.5 shadow-sm hover:shadow-md"
+            className="p-1.5 rounded-2xl bg-[var(--bg-secondary)] border border-[var(--border-color)] text-[var(--text-primary)] hover:border-[#8AB4F8]/50 transition-all flex items-center gap-1.5 shadow-sm hover:shadow-md"
             title={t('accountMenu')}
+            aria-label={`${t('accountMenu')} — ${userName}`}
             aria-haspopup="menu"
             aria-expanded={isMenuOpen}
           >
@@ -251,9 +259,6 @@ export default function Header({
                 <UserIcon className="w-3.5 h-3.5" />
               )}
             </div>
-            <span className="text-xs font-bold truncate max-w-[80px] sm:max-w-[140px]">
-              {userName}
-            </span>
             <ChevronDown className={`w-3.5 h-3.5 text-[var(--text-secondary)] transition-transform duration-200 ${isMenuOpen ? 'rotate-180' : ''}`} />
           </button>
 

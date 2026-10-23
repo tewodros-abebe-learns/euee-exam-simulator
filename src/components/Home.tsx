@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Upload, Type, CheckCircle2, FolderOpen } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import ExamUploadModal from './ExamUploadModal';
+import SectionBoundary from './SectionBoundary';
 import type { ImportedExam } from '../lib/examSchema';
 
 interface HomeProps {
@@ -123,15 +124,18 @@ export default function Home({ onUpload, onProcessText, onImportExam, isParsing,
         </div>
       </div>
 
-      <ExamUploadModal
-        isOpen={isUploadModalOpen}
-        onClose={() => setIsUploadModalOpen(false)}
-        onUpload={onUpload ?? (async () => {})}
-        onProcessText={onProcessText ?? (async () => {})}
-        onImportExam={onImportExam}
-        isParsing={isParsing}
-        defaultTab={uploadModalDefaultTab}
-      />
+      {/* A failure inside the dialog stays inside the dialog. */}
+      <SectionBoundary resetKey={isUploadModalOpen}>
+        <ExamUploadModal
+          isOpen={isUploadModalOpen}
+          onClose={() => setIsUploadModalOpen(false)}
+          onUpload={onUpload ?? (async () => {})}
+          onProcessText={onProcessText ?? (async () => {})}
+          onImportExam={onImportExam}
+          isParsing={isParsing}
+          defaultTab={uploadModalDefaultTab}
+        />
+      </SectionBoundary>
     </div>
   );
 }

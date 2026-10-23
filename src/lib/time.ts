@@ -47,3 +47,44 @@ export function getRemainingForSession(startTime: number, timeLimitSeconds: numb
   const elapsed = Math.floor((Date.now() - (startTime || Date.now())) / 1000);
   return Math.max(0, limit - elapsed);
 }
+
+/**
+ * Normalises anything a document may carry as a timestamp into milliseconds.
+ *
+ * Firestore hands back a `Timestamp`, this app's own records store `Date.now()`
+ * numbers, and older documents may hold an ISO string. Mixing them in a sort
+ * comparator produced `NaN`, which leaves the order to the engine — the exam
+ * cards visibly swapped places between renders.
+ */
+export function toMillis(value: unknown): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (value && typeof value === 'object') {
+    const candidate = value as { toMillis?: () => number; seconds?: number };
+    if (typeof candidate.toMillis === 'function') {
+      try {
+        return candidate.toMillis();
+      } catch {
+        return 0;
+      }
+    }
+    if (typeof candidate.seconds === 'number') return candidate.seconds * 1000;
+  }
+  return 0;
+}
+
+/** Newest first, then alphabetically: one input always yields one order. */
+export function sortByRecency<T>(
+  items: T[],
+  getTime: (item: T) => unknown,
+  getLabel: (item: T) => string
+): T[] {
+  return [...items].sort((a, b) => {
+    const byTime = toMillis(getTime(b)) - toMillis(getTime(a));
+    if (byTime !== 0) return byTime;
+    return getLabel(a).localeCompare(getLabel(b));
+  });
+}
