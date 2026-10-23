@@ -4,8 +4,11 @@ import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import helmet from "helmet";
 import cors from "cors";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { processExamGeneration } from "./src/server/examService";
+import { CSP_REPORT_ONLY, STRICT_TRANSPORT_SECURITY } from "./src/server/securityHeaders";
+import { parseTrustProxy } from "./src/server/trustProxy";
+
 
 dotenv.config();
 
@@ -16,8 +19,20 @@ async function startServer() {
   // ==========================================
   // Proxy & Security Middlewares
   // ==========================================
-  // Enable trust proxy for Cloud Run and reverse proxies (ensures rate-limiting correctly identifies clients)
-  app.set("trust proxy", 1);
+  /**
+   * Which peers may state a client's address.
+   *
+   * A hop *count* is not a trust decision: with `1`, a server that is reachable
+   * directly treats the caller's own `X-Forwarded-For` as the real address, so
+   * the rate limit can be dodged one header per request. Trusting only private
+   * ranges means the header counts when the request really did come through a
+   * proxy (Cloud Run's front end, a load balancer, the local dev proxy), and is
+   * ignored when a stranger connects straight to the server.
+   *
+   * Override with TRUST_PROXY (a hop count, an address list, or `false`) when
+   * the topology differs; src/server/trustProxy.ts does the parsing.
+   */
+  app.set("trust proxy", parseTrustProxy(process.env.TRUST_PROXY));
   app.disable("x-powered-by");
   
   // Use Helmet for robust HTTP security headers
@@ -35,6 +50,12 @@ async function startServer() {
       "Permissions-Policy",
       "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
     );
+    // Report-only on purpose: see src/server/securityHeaders.ts. In development
+    // Vite's inline bootstrap would only produce noise, so it is production-only.
+    if (process.env.NODE_ENV === "production") {
+      res.setHeader("Content-Security-Policy-Report-Only", CSP_REPORT_ONLY);
+      res.setHeader("Strict-Transport-Security", STRICT_TRANSPORT_SECURITY);
+    }
     next();
   });
 
@@ -52,8 +73,21 @@ async function startServer() {
     credentials: false,
   }));
 
+  /**
+   * Rate-limit bucket key.
+   *
+   * `req.ip` is Express's own answer: it honours the `trust proxy` setting
+   * above, and for a direct connection it is the socket address — so a caller
+   * cannot choose their bucket with `X-Forwarded-For: 1.2.3.9`. Reading the
+   * header here instead (as an earlier version did) handed every request a
+   * fresh allowance and made the AI quota limit decorative.
+   */
+  const limiterKey = (req: express.Request) =>
+    ipKeyGenerator(req.ip || req.socket.remoteAddress || 'unknown');
+
   // Rate Limiting (Prevent abuse / DDoS on API routes)
   const apiLimiter = rateLimit({
+    keyGenerator: limiterKey,
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 100, // Limit each IP to 100 requests per `window`
     standardHeaders: true, 
@@ -66,6 +100,7 @@ async function startServer() {
   });
 
   const aiGenerationLimiter = rateLimit({
+    keyGenerator: limiterKey,
     windowMs: 60 * 60 * 1000, // 1 hour
     max: 20, // Limit AI generations to 20 per hour per IP
     standardHeaders: true, 
@@ -115,7 +150,7 @@ async function startServer() {
   // Apply strict limiter to AI generation
   app.post("/api/generate-exam", async (req, res) => {
     try {
-      // `trust proxy` is enabled above, so req.ip reflects the real client.
+      // The same key the limiters use: Express's trust-proxy-aware address.
       const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
       const result = await processExamGeneration(req.body, clientIp);
       res.status(result.status).json(result.data);
