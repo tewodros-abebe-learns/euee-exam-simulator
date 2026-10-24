@@ -77,14 +77,14 @@ export default function Home({ onUpload, onProcessText, onImportExam, isParsing,
         {/* Right Side: Build your own exam */}
         <div className="w-full lg:w-[400px] shrink-0">
           <div className="bg-[var(--bg-secondary)] border border-[var(--border-color)] rounded-[32px] p-6 sm:p-7 shadow-xl">
+            {/* One message, one action: the panel used to carry the words
+                "Upload Exam" as a heading and then "Upload New Exam" as the
+                button right below it, which read as two separate features. */}
             <div className="flex items-center gap-3 mb-4">
               <div className="h-11 w-11 rounded-2xl bg-[#8AB4F8]/10 text-[#8AB4F8] flex items-center justify-center shrink-0">
                 <Upload className="w-5 h-5" />
               </div>
-              <div>
-                <h2 className="text-base font-display font-bold text-[var(--text-primary)]">{t('uploadExam')}</h2>
-                <p className="text-[11px] text-[var(--text-secondary)] leading-snug">{t('uploadExamDesc')}</p>
-              </div>
+              <p className="text-[13px] text-[var(--text-secondary)] leading-snug">{t('uploadExamDesc')}</p>
             </div>
 
             <ul className="space-y-2 mb-5 text-[11px] text-[var(--text-secondary)]">
