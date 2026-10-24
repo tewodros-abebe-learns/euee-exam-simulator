@@ -126,6 +126,37 @@ test('both locales define exactly the same keys, and every used key exists', () 
   assert.deepEqual(undefinedKeys, [], 't() calls with a key that does not exist.');
 });
 
+test('the review screen never prints an answer option as a raw string', () => {
+  // An option stored as `$5\ \text{m/s east}$` used to reach the screen with its
+  // dollar signs and backslashes intact, right below an explanation that
+  // rendered the same notation properly.
+  const summary = stripComments(read(join(SRC, 'components', 'SummaryPage.tsx')));
+  assert.ok(
+    summary.includes('function AnswerText'),
+    'SummaryPage must format answers through AnswerText.'
+  );
+  // Anything the student typed or the key supplies is an answer; both are
+  // options and both go through AnswerText.
+  // `={userAnswer}` is how the value is handed to <AnswerText />, so only a
+  // brace that is *not* an attribute (i.e. rendered as a child) is a leak.
+  const bareAnswer = /(?<!=)\{\s*(userAnswer|correctAnswer)\s*(\?\?|\}|\s*&&)/.exec(summary);
+  assert.equal(bareAnswer, null, `Render the answer via <AnswerText />: ${bareAnswer?.[0]}`);
+});
+
+test('the home screen offers each way to build an exam exactly once', () => {
+  // The panel carried "Upload Exam" as a heading and "Upload New Exam" as its
+  // button, so the same feature looked like two of them.
+  const home = stripComments(read(join(SRC, 'components', 'Home.tsx')));
+  const labels = new Set(
+    [...home.matchAll(/t\('(uploadExam|uploadNewExam)'\)/g)].map((match) => match[1])
+  );
+  assert.ok(
+    !(labels.has('uploadExam') && labels.has('uploadNewExam')),
+    'The home panel must not both title itself "Upload Exam" and offer an "Upload New Exam" button.'
+  );
+  assert.ok(labels.size > 0, 'The home panel must still offer a way to upload.');
+});
+
 test('the deployment and the server send the same security headers', () => {
   // The policy lives in one module and is duplicated into vercel.json because a
   // static deployment cannot import code. Duplication drifts; this catches it.

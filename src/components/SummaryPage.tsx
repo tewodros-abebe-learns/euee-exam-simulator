@@ -29,6 +29,7 @@ import { useLanguage } from '../contexts/LanguageContext';
 import LatexText from './LatexText';
 import { gradeExam, getAnswerStatus, getCorrectAnswer } from '../lib/scoring';
 import { formatDuration } from '../lib/time';
+import { hasRichText } from '../lib/richText';
 
 interface SummaryPageProps {
   userAnswers: Record<string, string>;
@@ -105,6 +106,30 @@ function Metric({
     >
       {inner}
     </button>
+  );
+}
+
+/**
+ * The student's answer and the key are answer *options*, not prose blocks.
+ *
+ * They used to be printed as raw strings, so an option written as
+ * `$5\ \text{m/s east}$` appeared with its dollar signs and backslashes
+ * intact, while the explanation right underneath rendered the same notation
+ * as proper maths. Plain options stay exactly as typed — running "5 m/s east"
+ * through Markdown would eat nothing, but "a*b*c" would lose its asterisks —
+ * and anything that actually carries maths or emphasis is rendered.
+ */
+function AnswerText({ text, className = '' }: { text: string; className?: string }) {
+  if (!hasRichText(text)) {
+    return <span className={`whitespace-pre-wrap ${className}`}>{text}</span>;
+  }
+  // LatexText renders block-level Markdown, so the rich variant is a block too:
+  // a <div> inside a <span> is invalid markup, and the answer row is laid out
+  // with flex, where either is welcome.
+  return (
+    <div className={`min-w-0 break-words ${className}`}>
+      <LatexText text={text} />
+    </div>
   );
 }
 
@@ -552,25 +577,23 @@ INSTRUCTIONS FOR AI TUTOR:
                             <LatexText text={question.question} />
                           </div>
 
-                          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-                            <span className="flex items-center gap-1.5 min-w-0">
+                          <div className="mt-2 flex flex-col gap-1 text-xs sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
+                            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                               <span className="text-[var(--text-secondary)] shrink-0">{t('yourAnswer')}:</span>
                               {userAnswer ? (
-                                <span className={`font-semibold truncate ${statusTone}`}>{userAnswer}</span>
+                                <AnswerText text={userAnswer} className={`font-semibold ${statusTone}`} />
                               ) : (
                                 <span className="text-[var(--text-secondary)] italic">{t('notAnswered')}</span>
                               )}
-                            </span>
-                            <span className="flex items-center gap-1.5 min-w-0">
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                               <span className="text-[var(--text-secondary)] shrink-0">{t('correctAnswer')}:</span>
-                              <span
-                                className={`font-semibold truncate ${
-                                  correctAnswer ? 'text-emerald-500' : 'text-[var(--text-secondary)] italic'
-                                }`}
-                              >
-                                {correctAnswer ?? t('noAnswerKey')}
-                              </span>
-                            </span>
+                              {correctAnswer ? (
+                                <AnswerText text={correctAnswer} className="font-semibold text-emerald-500" />
+                              ) : (
+                                <span className="text-[var(--text-secondary)] italic">{t('noAnswerKey')}</span>
+                              )}
+                            </div>
                           </div>
 
                           <button
