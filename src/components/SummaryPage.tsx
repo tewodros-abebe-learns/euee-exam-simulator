@@ -123,10 +123,13 @@ function AnswerText({ text, className = '' }: { text: string; className?: string
   if (!hasRichText(text)) {
     return <span className={`whitespace-pre-wrap ${className}`}>{text}</span>;
   }
+  // LatexText renders block-level Markdown, so the rich variant is a block too:
+  // a <div> inside a <span> is invalid markup, and the answer row is laid out
+  // with flex, where either is welcome.
   return (
-    <span className={`inline-block align-middle ${className}`}>
+    <div className={`min-w-0 break-words ${className}`}>
       <LatexText text={text} />
-    </span>
+    </div>
   );
 }
 
@@ -575,22 +578,22 @@ INSTRUCTIONS FOR AI TUTOR:
                           </div>
 
                           <div className="mt-2 flex flex-col gap-1 text-xs sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
-                            <span className="flex flex-wrap items-center gap-1.5 min-w-0">
+                            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                               <span className="text-[var(--text-secondary)] shrink-0">{t('yourAnswer')}:</span>
                               {userAnswer ? (
                                 <AnswerText text={userAnswer} className={`font-semibold ${statusTone}`} />
                               ) : (
                                 <span className="text-[var(--text-secondary)] italic">{t('notAnswered')}</span>
                               )}
-                            </span>
-                            <span className="flex flex-wrap items-center gap-1.5 min-w-0">
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                               <span className="text-[var(--text-secondary)] shrink-0">{t('correctAnswer')}:</span>
                               {correctAnswer ? (
                                 <AnswerText text={correctAnswer} className="font-semibold text-emerald-500" />
                               ) : (
                                 <span className="text-[var(--text-secondary)] italic">{t('noAnswerKey')}</span>
                               )}
-                            </span>
+                            </div>
                           </div>
 
                           <button
