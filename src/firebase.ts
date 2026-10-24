@@ -31,7 +31,12 @@ try {
       localCache: persistentLocalCache({
         tabManager: persistentMultipleTabManager()
       }),
-      experimentalForceLongPolling: true,
+      // Auto-detect instead of forcing long polling: streaming (WebChannel) is
+      // fast and is what most students get, while a network that genuinely
+      // blocks it still falls back on its own. Forcing long polling sent every
+      // read and write through repeated HTTP requests on every device, which is
+      // a large part of why the library felt sluggish and sometimes stalled.
+      experimentalAutoDetectLongPolling: true,
       ignoreUndefinedProperties: true
     },
     databaseId

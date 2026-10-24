@@ -297,11 +297,17 @@ export default function ExamInterface({
   // region — screen readers would interrupt the student endlessly. Only the
   // milestones are spoken.
   const [timeNotice, setTimeNotice] = useState('');
+  // Compared against the previous value rather than equality: a throttled
+  // background tab can skip 300 or 60 entirely, and the announcement would
+  // then never be made.
+  const lastAnnouncedRef = useRef<number>(Number.POSITIVE_INFINITY);
   useEffect(() => {
     if (isUntimed) return;
-    if (timeLeft === 300) setTimeNotice(t('fiveMinutesLeft'));
-    else if (timeLeft === 60) setTimeNotice(t('oneMinuteLeft'));
-    else if (timeLeft === 0) setTimeNotice(t('timeUp'));
+    const previous = lastAnnouncedRef.current;
+    lastAnnouncedRef.current = timeLeft;
+    if (timeLeft === 0) setTimeNotice(t('timeUp'));
+    else if (previous > 60 && timeLeft <= 60) setTimeNotice(t('oneMinuteLeft'));
+    else if (previous > 300 && timeLeft <= 300) setTimeNotice(t('fiveMinutesLeft'));
   }, [timeLeft, isUntimed, t]);
 
   const formatTime = formatClock;
@@ -316,18 +322,31 @@ export default function ExamInterface({
   const handleOptionSelectRef = useRef(handleOptionSelect);
   handleOptionSelectRef.current = handleOptionSelect;
 
+  /**
+   * The live question index.
+   *
+   * The question body cross-fades, so during the transition the previous
+   * question — with its own `Next`/`Previous` buttons and its own copy of these
+   * callbacks — is still in the document for ~200 ms. A quick second tap hit
+   * that stale copy, which then navigated from the *old* index. Reading the
+   * index from a ref keeps every handler correct no matter which render it came
+   * from.
+   */
+  const currentIndexRef = useRef(currentIndex);
+  currentIndexRef.current = currentIndex;
+
   const handleNext = () => {
-    if (currentIndex < questions.length - 1) {
-      setCurrentIndex(prev => prev + 1);
+    const index = currentIndexRef.current;
+    if (index < questions.length - 1) {
+      setCurrentIndex(index + 1);
     } else {
       setShowSubmitModal(true);
     }
   };
 
   const handlePrevious = () => {
-    if (currentIndex > 0) {
-      setCurrentIndex(prev => prev - 1);
-    }
+    const index = currentIndexRef.current;
+    if (index > 0) setCurrentIndex(index - 1);
   };
 
   const handleSubmit = () => {
@@ -346,13 +365,11 @@ export default function ExamInterface({
   };
 
   const toggleFlag = () => {
+    const index = currentIndexRef.current;
     setFlaggedQuestions(prev => {
       const next = new Set(prev);
-      if (next.has(currentIndex)) {
-        next.delete(currentIndex);
-      } else {
-        next.add(currentIndex);
-      }
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
       return next;
     });
   };

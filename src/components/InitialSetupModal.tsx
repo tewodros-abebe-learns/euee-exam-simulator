@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Languages, Sun, Moon, Check, User, Sparkles, LogIn, X, Loader2 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
+import { lockScroll, unlockScroll } from '../lib/scrollLock';
 import GoogleIcon from './GoogleIcon';
 import { Language } from '../i18n/translations';
 
@@ -47,18 +48,18 @@ export default function InitialSetupModal({
     }
   };
   
-  // Prevent background scrolling when modal is open
+  // Prevent background scrolling when modal is open. The overflow lock is
+  // shared with the other dialogs so one closing cannot unlock the page while
+  // another is still covering it.
   useEffect(() => {
-    if (isOpen) {
-      const originalOverflow = document.body.style.overflow;
-      const originalTouchAction = document.body.style.touchAction;
-      document.body.style.overflow = 'hidden';
-      document.body.style.touchAction = 'none';
-      return () => {
-        document.body.style.overflow = originalOverflow;
-        document.body.style.touchAction = originalTouchAction;
-      };
-    }
+    if (!isOpen) return;
+    const originalTouchAction = document.body.style.touchAction;
+    lockScroll();
+    document.body.style.touchAction = 'none';
+    return () => {
+      document.body.style.touchAction = originalTouchAction;
+      unlockScroll();
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;

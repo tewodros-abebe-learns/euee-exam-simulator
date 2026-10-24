@@ -477,18 +477,34 @@ class OfflineStorageManager {
     });
   }
 
+  /** Counts every record in one store without transferring a single row. */
+  private async countStore(storeName: 'exams' | 'sessions' | 'sync_queue'): Promise<number> {
+    await this.whenReady();
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, 'readonly');
+      const req = tx.objectStore(storeName).count();
+      req.onsuccess = () => resolve(req.result || 0);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /**
+   * Cache statistics for the header badge.
+   *
+   * This used to `getAll()` the exam store and the session store — every paper
+   * with every question — and it runs after each save, so a large library paid
+   * a full structured clone (megabytes) for three integers. `count()` reads the
+   * same numbers without copying a record.
+   */
   async getStats(): Promise<{ cachedExamsCount: number; offlineSessionsCount: number; pendingSyncCount: number }> {
     try {
-      const [exams, sessions, queue] = await Promise.all([
-        this.getAllExams(),
-        this.getAllSessions(),
-        this.getSyncQueue()
+      const [cachedExamsCount, offlineSessionsCount, pendingSyncCount] = await Promise.all([
+        this.countStore('exams'),
+        this.countStore('sessions'),
+        this.countStore('sync_queue')
       ]);
-      return {
-        cachedExamsCount: exams.length,
-        offlineSessionsCount: sessions.length,
-        pendingSyncCount: queue.length
-      };
+      return { cachedExamsCount, offlineSessionsCount, pendingSyncCount };
     } catch {
       return { cachedExamsCount: 0, offlineSessionsCount: 0, pendingSyncCount: 0 };
     }

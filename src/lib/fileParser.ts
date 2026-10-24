@@ -72,13 +72,12 @@ export async function extractTextFromFile(file: File): Promise<string> {
       // Bundle the worker locally: loading it from a CDN broke offline uploads
       // and made parsing depend on a third-party host.
       if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-        try {
-          const workerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
-          pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
-        } catch {
-          pdfjsLib.GlobalWorkerOptions.workerSrc =
-            'https://unpkg.com/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs';
-        }
+        // Bundled only. The old fallback pulled the worker from a public CDN,
+        // which contradicted "works offline" and made device-side extraction
+        // depend on a third-party host; if the bundled worker is unavailable
+        // the caller falls through to the server path instead.
+        const workerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
+        pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
       }
       const arrayBuffer = await file.arrayBuffer();
       const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });

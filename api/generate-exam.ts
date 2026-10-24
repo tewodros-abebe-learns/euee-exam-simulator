@@ -1,4 +1,12 @@
 import { processExamGeneration } from "../src/server/examService";
+import { resolveClientIp } from "../src/server/clientIp";
+
+/**
+ * Extracting a 60-question booklet and writing its JSON takes far longer than
+ * a default serverless invocation allows, and the function was being killed
+ * mid-generation. 60s is the ceiling on the Hobby plan; the plan can raise it.
+ */
+export const maxDuration = 60;
 
 export default async function handler(req: any, res: any) {
   // CORS: only allow explicitly configured origins. The browser calls this
@@ -28,11 +36,11 @@ export default async function handler(req: any, res: any) {
   res.setHeader("Cache-Control", "no-store");
 
   try {
-    const forwarded = req.headers?.["x-forwarded-for"];
-    const clientIp =
-      (typeof forwarded === "string" ? forwarded.split(",")[0].trim() : "") ||
-      (req.socket && req.socket.remoteAddress) ||
-      "unknown";
+    // Never the caller's own header: see src/server/clientIp.ts.
+    const clientIp = resolveClientIp(
+      (req.headers || {}) as Record<string, string | string[] | undefined>,
+      req.socket?.remoteAddress || "unknown"
+    );
 
     let body: unknown;
     if (typeof req.body === "string") {

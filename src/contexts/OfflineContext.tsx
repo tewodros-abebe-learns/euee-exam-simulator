@@ -13,6 +13,8 @@ import { useLanguage } from './LanguageContext';
 import { db, auth } from '../firebase';
 import { runWithTimeout, readWithTimeout, LOCAL_WRITE_TIMEOUT_MS, CLOUD_WRITE_TIMEOUT_MS } from '../lib/cloudWrite';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
+import { shouldRetireQueueItem } from '../lib/syncQueue';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -227,14 +229,19 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // 3c. Remove queue entries that no longer need replaying. A session that
-      //     failed to mirror keeps its entry so the next cycle retries it.
+      // 3c. Remove queue entries that no longer need replaying.
+      //
+      //     Three cases are finished business: the session was mirrored during
+      //     this run, the app already wrote it directly (in which case it is
+      //     flagged `syncedWithCloud` and step 3b skipped it), or the session no
+      //     longer exists. Previously only the first case was recognised, so
+      //     every finished attempt left a permanent entry behind and the
+      //     "changes queued" badge only ever went up.
+      const retireContext = { sessions, syncedNow: syncedSessionIds };
       for (const item of queue) {
         if (item.type === 'CREATE_EXAM') continue;
-        if (item.type === 'SAVE_SESSION') {
-          const queuedId = (item.payload as OfflineSession | undefined)?.id;
-          if (queuedId && !syncedSessionIds.has(queuedId)) continue;
-        }
+        // A genuine unsent attempt keeps its entry so the next cycle retries.
+        if (item.type === 'SAVE_SESSION' && !shouldRetireQueueItem(item, retireContext)) continue;
         if (item.id) {
           try {
             await offlineStorage.clearSyncQueueItem(item.id);
@@ -279,6 +286,37 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('offline', handleOffline);
     };
   }, [triggerSync]);
+
+  // 4b. Sync once on startup and whenever a session appears.
+  //
+  //     Replaying only on the browser's `online` event meant work created
+  //     offline — or before a failed write — could sit on the device
+  //     indefinitely, and a freshly signed-in student never pulled it up either.
+  //     `triggerSync` already refuses to run twice concurrently and returns
+  //     immediately when there is no account or no connection.
+  useEffect(() => {
+    if (!isOfflineReady) return;
+
+    const runOnce = () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      if (!auth.currentUser) return;
+      void triggerSync();
+    };
+
+    // A short delay lets Firebase restore its session and lets the first
+    // screen paint before any background network work starts.
+    const startup = window.setTimeout(runOnce, 2000);
+    // Signing in (or restoring a session) is the other moment pending work
+    // becomes replayable.
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) window.setTimeout(runOnce, 0);
+    });
+
+    return () => {
+      window.clearTimeout(startup);
+      unsubscribe();
+    };
+  }, [isOfflineReady, triggerSync]);
 
   // 5. Prompt Install Trigger
   const promptInstall = useCallback(async (): Promise<boolean> => {
